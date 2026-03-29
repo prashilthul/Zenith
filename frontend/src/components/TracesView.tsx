@@ -33,6 +33,11 @@ function approxTokens(chars: number) {
   return Math.round(chars / 4);
 }
 
+/** Unescape literal \n and \t sequences so <pre> renders real whitespace. */
+function unescapeText(s: string): string {
+  return s.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+}
+
 export default function TracesView() {
   const [traces, setTraces] = useState<Trace[]>([]);
   const [loading, setLoading] = useState(true);
@@ -235,8 +240,8 @@ export default function TracesView() {
                                 </div>
                                 <pre className="text-xs font-mono text-slate-400 bg-slate-950/60 rounded-md p-2.5 overflow-x-auto whitespace-pre-wrap break-words max-h-[300px] overflow-y-auto border border-slate-800/50">
                                   {inputExpanded
-                                    ? (trace.input_full || trace.input_preview)
-                                    : trace.input_preview.slice(0, 200)}
+                                    ? unescapeText(trace.input_full || trace.input_preview)
+                                    : unescapeText(trace.input_preview.slice(0, 200))}
                                   {trace.input_preview.length > 200 && (
                                     <button
                                       onClick={() => togglePreview(inputKey)}
@@ -256,8 +261,8 @@ export default function TracesView() {
                                 </div>
                                 <pre className="text-xs font-mono text-emerald-300/70 bg-slate-950/60 rounded-md p-2.5 overflow-x-auto whitespace-pre-wrap break-words max-h-[300px] overflow-y-auto border border-slate-800/50">
                                   {outputExpanded
-                                    ? (trace.output_full || trace.output_preview)
-                                    : trace.output_preview.slice(0, 200)}
+                                    ? unescapeText(trace.output_full || trace.output_preview)
+                                    : unescapeText(trace.output_preview.slice(0, 200))}
                                   {trace.output_preview.length > 200 && (
                                     <button
                                       onClick={() => togglePreview(outputKey)}

@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 # Quick action patterns
 PATTERNS = {
     r"(?i)(status|health|how.*(cluster|pod))": "cluster_status",
-    r"(?i)(fix|resolve|heal|remediate)": "fix_request",
     r"(?i)(incident|history|audit|log)": "incident_query",
     r"(?i)(chaos|break|inject)": "chaos_trigger",
+    # NLP catch-all: action verbs that imply a kubectl command
+    r"(?i)(fix|resolve|heal|remediate|restart|delete|kill|remove|increase|decrease|scale|rollback|undo|revert|describe|show\s+logs|get\s+logs|patch|bump|resize)": "nlp_command",
 }
 
 
@@ -111,8 +112,8 @@ def _classify_intent(text: str) -> str:
 async def _handle_intent(intent: str, text: str) -> str:
     if intent == "cluster_status":
         return await _get_cluster_status()
-    elif intent == "fix_request":
-        return await _handle_fix_request(text)
+    elif intent == "nlp_command":
+        return await _handle_nlp_command(text)
     elif intent == "incident_query":
         return await _get_recent_incidents()
     elif intent == "chaos_trigger":
@@ -145,19 +146,86 @@ async def _get_cluster_status() -> str:
         return f"Error fetching cluster status: {e}"
 
 
-async def _handle_fix_request(text: str) -> str:
-    try:
-        import uuid
-        from src.graph.builder import run_pipeline
+async def _handle_nlp_command(text: str) -> str:
+    """Use LLM to parse natural language into a kubectl action, then execute."""
+    import json as _json
 
-        thread_id = f"slack-fix-{uuid.uuid4().hex[:8]}"
-        result = await asyncio.to_thread(run_pipeline, thread_id=thread_id)
-        anomalies = result.get("anomalies", []) if isinstance(result, dict) else []
-        if anomalies:
-            return f"Scan complete: {len(anomalies)} anomalies detected and processed. Check dashboard for details."
-        return "Scan complete: no anomalies detected."
+    system = (
+        "You are a Kubernetes assistant. Parse the user's request into a JSON action.\n"
+        "Output ONLY valid JSON with these fields:\n"
+        '- action: one of "delete_pod", "patch_resources", "rollback", "scale", "status", "describe", "logs"\n'
+        '- target: the pod or deployment name mentioned (or "all" if not specific)\n'
+        '- namespace: default "k8swhisperer-demo"\n'
+        '- params: any extra params like {"memory": "128Mi"}\n\n'
+        "If the user just wants info, use action \"status\".\n"
+        "Examples:\n"
+        '"delete the crashloop pod" -> {"action": "delete_pod", "target": "crashloop-demo", "namespace": "k8swhisperer-demo"}\n'
+        '"increase memory for oomkill" -> {"action": "patch_resources", "target": "oomkill-deploy-demo", "namespace": "k8swhisperer-demo", "params": {"memory": "128Mi"}}\n'
+        '"what\'s broken?" -> {"action": "status", "target": "all", "namespace": "k8swhisperer-demo"}'
+    )
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": text},
+    ]
+
+    try:
+        response = await asyncio.to_thread(llm_call_sync, messages)
     except Exception as e:
-        return f"Error triggering fix: {e}"
+        logger.error("LLM call failed for NLP command: %s", e)
+        return f"Error understanding your request: {e}"
+
+    try:
+        plan = _json.loads(response)
+    except Exception:
+        return f"I understood your request but couldn't parse it into an action. Raw: {response[:200]}"
+
+    action = plan.get("action", "status")
+    target = plan.get("target", "")
+    namespace = plan.get("namespace", "k8swhisperer-demo")
+
+    try:
+        if action == "delete_pod":
+            from src.mcp_server.kubectl_tools import delete_pod
+            result = delete_pod(name=target, namespace=namespace)
+            return f"Deleted pod `{target}`: {result.get('status', result.get('error', 'unknown'))}"
+
+        elif action == "patch_resources":
+            from src.mcp_server.kubectl_tools import patch_deployment_resources
+            params = plan.get("params", {})
+            result = patch_deployment_resources(
+                name=target,
+                namespace=namespace,
+                memory_limit=params.get("memory", ""),
+                cpu_limit=params.get("cpu", ""),
+            )
+            return f"Patched `{target}`: {result.get('status', result.get('error', 'unknown'))}"
+
+        elif action == "rollback":
+            from src.mcp_server.kubectl_tools import rollback_deployment
+            result = rollback_deployment(name=target, namespace=namespace)
+            return f"Rollback `{target}`: {result.get('status', result.get('error', 'unknown'))}"
+
+        elif action == "logs":
+            from src.mcp_server.kubectl_tools import get_pod_logs
+            result = get_pod_logs(name=target, namespace=namespace, tail_lines=20)
+            return f"Last 20 lines of `{target}`:\n```\n{result if isinstance(result, str) else str(result)[:500]}\n```"
+
+        elif action == "describe":
+            from src.mcp_server.kubectl_tools import describe_pod
+            result = describe_pod(name=target, namespace=namespace)
+            return f"Describe `{target}`:\n```\n{str(result)[:500]}\n```"
+
+        elif action == "scale":
+            # Scale not yet implemented as a tool — fall back to general chat
+            return await _general_chat(f"Scale request for {target}: {text}")
+
+        else:  # status
+            return await _get_cluster_status()
+
+    except Exception as e:
+        logger.error("NLP command execution failed: action=%s target=%s error=%s", action, target, e)
+        return f"Error executing {action} on `{target}`: {e}"
 
 
 async def _get_recent_incidents() -> str:
