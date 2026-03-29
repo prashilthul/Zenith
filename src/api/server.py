@@ -18,17 +18,25 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan: start background observation loop on startup."""
+    """Application lifespan: start background observation loop and Slack Socket Mode on startup."""
     from src.main import observation_loop
+    from src.slack.listener import start_socket_mode
 
     task = asyncio.create_task(observation_loop(interval_seconds=30))
     logger.info("Observation loop background task started (30s interval)")
+
+    slack_task = asyncio.create_task(start_socket_mode())
+    logger.info("Slack Socket Mode background task started")
+
     yield
+
+    slack_task.cancel()
     task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        logger.info("Observation loop background task cancelled")
+    for t, name in [(task, "Observation loop"), (slack_task, "Slack Socket Mode")]:
+        try:
+            await t
+        except asyncio.CancelledError:
+            logger.info("%s background task cancelled", name)
 
 
 app = FastAPI(

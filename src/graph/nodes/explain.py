@@ -10,8 +10,11 @@ from pathlib import Path
 
 from src.config import settings
 from src.graph.state import ClusterState
+from src.knowledge.fingerprint import compute_fingerprint
+from src.knowledge.runbook_store import store_runbook
 from src.llm.client import llm_call_sync
 from src.llm.prompts import EXPLAINER_SYSTEM_PROMPT
+from src.blockchain.stellar_client import store_incident_on_chain
 from src.mcp_server.slack_tools import send_slack_message
 from src.models import LogEntry
 
@@ -82,7 +85,11 @@ def explain_node(state: ClusterState) -> dict:
 
     # ── Build audit log entry ────────────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()
-    decision = "auto-executed" if approved else "rejected"
+    result_str = state.get("result", "")
+    if result_str:  # If there's any result, the action was executed
+        decision = "human-approved" if state.get("approved") else "auto-executed"
+    else:
+        decision = "rejected"
 
     log_entry = LogEntry(
         incident_id=incident_id,
@@ -99,6 +106,33 @@ def explain_node(state: ClusterState) -> dict:
     )
 
     _write_audit_log(log_entry)
+
+    # ── Store runbook for future use ────────────────────────────────
+    if settings.ENABLE_RUNBOOK_CACHE:
+        try:
+            if anomaly and result:
+                fp = compute_fingerprint(anomaly["type"], anomaly.get("raw_signal", ""), "Pod")
+                success = "success" in result.lower() or "deleted" in result.lower()
+                store_runbook(fp, state.get("diagnosis", ""), plan or {}, success, 0)
+        except Exception as e:
+            logger.warning("Failed to store runbook: %s", e)
+
+    # ── Store on blockchain (if enabled) ────────────────────────────
+    try:
+        asyncio.get_event_loop().run_until_complete(
+            store_incident_on_chain(
+                incident_id=incident_id,
+                anomaly_type=anomaly.get("type", "unknown"),
+                action_taken=plan.get("action", "N/A"),
+                timestamp=int(datetime.now(timezone.utc).timestamp()),
+                confidence_score=int(plan.get("confidence", 0) * 100),
+                was_auto_executed=(decision == "auto-executed"),
+                diagnosis_summary=diagnosis[:256] if diagnosis else "N/A",
+            )
+        )
+        logger.info("Blockchain record stored for incident %s", incident_id)
+    except Exception:
+        logger.exception("Failed to store incident on blockchain (non-fatal)")
 
     # ── Post to Slack ────────────────────────────────────────────────
     channel = settings.SLACK_CHANNEL_ID

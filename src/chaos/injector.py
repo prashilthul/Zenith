@@ -33,6 +33,7 @@ CHAOS_SCENARIOS: list[ChaosScenario] = [
     ChaosScenario(name="Pending Pod", yaml_path=_MANIFESTS_DIR / "pending-demo.yaml"),
     ChaosScenario(name="Stalled Deployment", yaml_path=_MANIFESTS_DIR / "stalled-deploy.yaml"),
     ChaosScenario(name="Evicted Demo", yaml_path=_MANIFESTS_DIR / "evicted-demo.yaml"),
+    ChaosScenario(name="Node Pressure Demo", yaml_path=_MANIFESTS_DIR / "node-pressure-demo.yaml"),
 ]
 
 

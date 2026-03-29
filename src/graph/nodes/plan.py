@@ -56,6 +56,30 @@ _FALLBACK_PLANS: dict[str, dict] = {
         "is_destructive": False,
         "reasoning": "Recreate evicted pod; node pressure may have cleared.",
     },
+    "CPUThrottling": {
+        "action": "patch_deployment_resources",
+        "params": {"cpu_limit": "1000m"},
+        "confidence": 0.7,
+        "blast_radius": "medium",
+        "is_destructive": False,
+        "reasoning": "Increase CPU limits to reduce throttling. Routes to HITL due to medium blast radius.",
+    },
+    "DeploymentStalled": {
+        "action": "rollback_deployment",
+        "params": {},
+        "confidence": 0.7,
+        "blast_radius": "high",
+        "is_destructive": True,
+        "reasoning": "Rollback to last known good revision. Destructive action requires human approval.",
+    },
+    "NodeNotReady": {
+        "action": "cordon_node",
+        "params": {},
+        "confidence": 0.5,
+        "blast_radius": "high",
+        "is_destructive": True,
+        "reasoning": "Cordon node to prevent new scheduling. High blast radius requires human approval.",
+    },
 }
 
 

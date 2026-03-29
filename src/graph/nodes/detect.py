@@ -106,6 +106,12 @@ def detect_node(state: ClusterState) -> dict:
 
     Returns ``{"anomalies": [...], "current_anomaly_index": 0}``.
     """
+    # Skip detection if anomalies are already pre-populated (multi-anomaly processing)
+    existing = state.get("anomalies", [])
+    if existing:
+        logger.info("detect_node: skipping — %d anomalies already populated", len(existing))
+        return {"anomalies": [], "current_anomaly_index": 0}
+
     events = state.get("events", [])
     if not events:
         logger.info("detect_node: no events to classify")
@@ -152,6 +158,14 @@ def detect_node(state: ClusterState) -> dict:
             "timestamp": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
         }
         anomalies.append(anomaly)
+
+    # Only mark the first anomaly as "seen" (pipeline processes index 0).
+    # Other anomalies will be re-detected and processed in subsequent cycles.
+    if len(anomalies) > 1:
+        for extra in anomalies[1:]:
+            key = (extra["type"], extra["affected_resource"])
+            _seen.pop(key, None)
+            logger.info("Un-marking dedup for queued anomaly: %s on %s", extra["type"], extra["affected_resource"])
 
     logger.info("detect_node found %d anomalies", len(anomalies))
     return {"anomalies": anomalies, "current_anomaly_index": 0}

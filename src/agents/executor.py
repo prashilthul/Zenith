@@ -162,7 +162,7 @@ _model_name = settings.LITELLM_MODEL_FAST.removeprefix("anthropic/")
 _llm = ChatAnthropic(
     model=_model_name,
     max_tokens=4096,
-    anthropic_api_key=settings.LITELLM_API_KEY or None,
+    anthropic_api_key=settings.LLM_API_KEY or None,
 )
 
 executor_agent = create_react_agent(

@@ -81,6 +81,34 @@ async def observation_loop(interval_seconds: int = 30) -> None:
                     len(anomalies),
                     thread_id,
                 )
+
+                # Process remaining anomalies individually
+                # Each gets its own pipeline run with the anomaly pre-set
+                events = result.get("events", [])
+                for idx in range(1, min(len(anomalies), 4)):  # Cap at 4 to avoid LLM cost explosion
+                    extra_thread = f"obs-{uuid.uuid4().hex[:8]}"
+                    extra_incident = f"inc-{uuid.uuid4().hex[:8]}"
+                    try:
+                        a = anomalies[idx]
+                        logger.info(
+                            "observation_loop: processing anomaly %d/%d: %s on %s",
+                            idx + 1, len(anomalies), a.get("type"), a.get("affected_resource"),
+                        )
+                        # Run pipeline with pre-populated state (skips observe/detect effectively)
+                        run_pipeline(
+                            incident_id=extra_incident,
+                            thread_id=extra_thread,
+                            initial_state={
+                                "events": events,
+                                "anomalies": [a],  # Single anomaly
+                                "current_anomaly_index": 0,
+                            },
+                        )
+                    except Exception:
+                        logger.exception(
+                            "observation_loop: failed processing anomaly %d (thread=%s)",
+                            idx + 1, extra_thread,
+                        )
             else:
                 logger.info("observation_loop: No anomalies detected (thread=%s)", thread_id)
         except Exception:

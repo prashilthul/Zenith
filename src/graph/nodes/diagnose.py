@@ -6,7 +6,10 @@ import asyncio
 import json
 import logging
 
+from src.config import settings
 from src.graph.state import ClusterState
+from src.knowledge.fingerprint import compute_fingerprint
+from src.knowledge.runbook_store import lookup_runbook
 from src.llm.client import llm_call_sync
 from src.llm.prompts import DIAGNOSTICIAN_SYSTEM_PROMPT
 from src.mcp_server.kubectl_tools import (
@@ -121,6 +124,14 @@ def diagnose_node(state: ClusterState) -> dict:
         anomaly.get("type"),
         anomaly.get("affected_resource"),
     )
+
+    # Check runbook cache first
+    if settings.ENABLE_RUNBOOK_CACHE:
+        fingerprint = compute_fingerprint(anomaly["type"], anomaly.get("raw_signal", ""), "Pod")
+        cached = lookup_runbook(fingerprint)
+        if cached and cached.get("success"):
+            logger.info("Runbook cache HIT for %s (fingerprint=%s)", anomaly["type"], fingerprint)
+            return {"diagnosis": f"[CACHED RUNBOOK] {cached['diagnosis']}", "incident_id": state.get("incident_id", "")}
 
     evidence = _gather_evidence(anomaly)
 

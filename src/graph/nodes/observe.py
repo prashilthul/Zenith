@@ -29,6 +29,11 @@ def observe_node(state: ClusterState) -> dict:
     Returns ``{"events": [...]}`` where each entry is a normalised dict
     suitable for the classifier LLM.
     """
+    # Skip observation if events are already pre-populated (multi-anomaly processing)
+    if state.get("events"):
+        logger.info("observe_node: skipping — events already populated (%d)", len(state["events"]))
+        return {"events": []}
+
     namespace = settings.NAMESPACE
     if namespace in _SKIP_NAMESPACES:
         logger.warning("Configured NAMESPACE '%s' is in skip list; observing anyway.", namespace)
