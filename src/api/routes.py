@@ -275,6 +275,31 @@ async def list_chaos_scenarios() -> list[dict[str, Any]]:
     return list_scenarios()
 
 
+@router.get("/pods/{namespace}/{name}/logs")
+async def get_pod_logs_api(namespace: str, name: str, tail: int = 100, previous: bool = False):
+    """Return logs for a specific pod."""
+    from src.mcp_server.kubectl_tools import get_pod_logs
+
+    result = get_pod_logs(name=name, namespace=namespace, tail_lines=tail, previous=previous)
+    return result
+
+
+@router.get("/traces")
+async def get_traces_api(limit: int = 200):
+    """Return recent LLM call traces."""
+    from src.tracing.tracer import get_traces
+
+    return get_traces(limit=limit)
+
+
+@router.get("/traces/{incident_id}")
+async def get_incident_traces(incident_id: str):
+    """Return all LLM call traces for a specific incident."""
+    from src.tracing.tracer import get_traces_for_incident
+
+    return get_traces_for_incident(incident_id)
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     """WebSocket for real-time incident update broadcasts."""

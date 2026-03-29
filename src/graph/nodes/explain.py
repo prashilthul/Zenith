@@ -12,7 +12,7 @@ from src.config import settings
 from src.graph.state import ClusterState
 from src.knowledge.fingerprint import compute_fingerprint
 from src.knowledge.runbook_store import store_runbook
-from src.llm.client import llm_call_sync
+from src.llm.client import llm_call_sync, set_current_trace_id
 from src.llm.prompts import EXPLAINER_SYSTEM_PROMPT
 from src.blockchain.stellar_client import store_incident_on_chain
 from src.mcp_server.slack_tools import send_slack_message
@@ -58,6 +58,10 @@ def explain_node(state: ClusterState) -> dict:
     result = state.get("result", "N/A")
     approved = state.get("approved", True)
     incident_id = state.get("incident_id", "unknown")
+
+    # Set trace context for LLM call
+    if incident_id:
+        set_current_trace_id(incident_id, stage="explain")
 
     # ── Generate explanation via LLM ─────────────────────────────────
     user_message = (

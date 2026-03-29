@@ -6,13 +6,34 @@ import asyncio
 import json
 import logging
 import re
+import threading
+import time as _time
 from typing import Any, Optional
 
 import litellm
 
 from src.config import settings
+from src.tracing.tracer import record_trace
 
 logger = logging.getLogger(__name__)
+
+# ── Per-thread trace context ───────────────────────────────────────────
+
+_trace_ctx = threading.local()
+
+
+def set_current_trace_id(trace_id: str, stage: str = "unknown") -> None:
+    """Set the trace_id and stage for the current thread's LLM calls."""
+    _trace_ctx.trace_id = trace_id
+    _trace_ctx.stage = stage
+
+
+def _get_trace_id() -> str:
+    return getattr(_trace_ctx, "trace_id", "")
+
+
+def _get_stage() -> str:
+    return getattr(_trace_ctx, "stage", "unknown")
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -171,15 +192,35 @@ def llm_call_sync(
     if settings.LLM_BASE_URL:
         kwargs["api_base"] = settings.LLM_BASE_URL
 
+    input_text = json.dumps(messages, default=str)
+    t0 = _time.monotonic()
+    result = ""
+
     for attempt in range(3):
         try:
             response = litellm.completion(**kwargs)
-            return response.choices[0].message.content
+            result = response.choices[0].message.content
+            break
         except Exception as exc:
             logger.warning("Sync LLM attempt %d/3 failed: %s", attempt + 1, exc)
-            import time
-            time.sleep(2 ** attempt)
-    return ""
+            _time.sleep(2 ** attempt)
+
+    duration_ms = int((_time.monotonic() - t0) * 1000)
+    trace_id = _get_trace_id()
+    if trace_id:
+        try:
+            record_trace(
+                trace_id=trace_id,
+                stage=_get_stage(),
+                model=model,
+                input_text=input_text,
+                output_text=result,
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            logger.warning("Failed to record LLM trace", exc_info=True)
+
+    return result
 
 
 def llm_call_json_sync(
@@ -188,7 +229,10 @@ def llm_call_json_sync(
     model: Optional[str] = None,
     temperature: float = 0.2,
 ) -> Any:
-    """Synchronous LLM call that returns parsed JSON."""
+    """Synchronous LLM call that returns parsed JSON.
+
+    Tracing is handled inside ``llm_call_sync``, so no extra trace here.
+    """
     raw = llm_call_sync(messages, model=model, temperature=temperature)
     if not raw:
         return None

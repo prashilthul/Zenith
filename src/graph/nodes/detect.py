@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 
 from src.graph.state import ClusterState
-from src.llm.client import llm_call_json_sync
+from src.llm.client import llm_call_json_sync, set_current_trace_id
 from src.llm.prompts import CLASSIFIER_SYSTEM_PROMPT
 from src.models import Anomaly
 
@@ -120,6 +120,11 @@ def detect_node(state: ClusterState) -> dict:
 
     # Build user prompt from events
     user_message = json.dumps(events, indent=2, default=str)
+
+    # Set trace context for LLM call
+    incident_id = state.get("incident_id", "")
+    if incident_id:
+        set_current_trace_id(incident_id, stage="detect")
 
     # Call classifier LLM
     messages = [

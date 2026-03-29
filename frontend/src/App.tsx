@@ -18,14 +18,18 @@ import {
   Globe,
   Server,
   Lock,
+  BrainCircuit,
+  Terminal,
 } from "lucide-react";
 import Dashboard from "./components/Dashboard";
 import AuditLog from "./components/AuditLog";
 import WarRoom from "./components/WarRoom";
 import ChaosButton from "./components/ChaosButton";
 import MTTRChart from "./components/MTTRChart";
+import TracesView from "./components/TracesView";
+import PodLogsView from "./components/PodLogsView";
 
-type Tab = "dashboard" | "audit" | "warroom" | "chaos" | "blockchain";
+type Tab = "dashboard" | "audit" | "warroom" | "chaos" | "blockchain" | "traces" | "logs";
 
 const tabs: { id: Tab; label: string; icon: React.ReactNode; color: string }[] = [
   { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={18} />, color: "cyan" },
@@ -33,6 +37,8 @@ const tabs: { id: Tab; label: string; icon: React.ReactNode; color: string }[] =
   { id: "warroom", label: "War Room", icon: <Radio size={18} />, color: "rose" },
   { id: "chaos", label: "Chaos Lab", icon: <FlaskConical size={18} />, color: "amber" },
   { id: "blockchain", label: "Blockchain", icon: <Link size={18} />, color: "purple" },
+  { id: "traces", label: "Traces", icon: <BrainCircuit size={18} />, color: "cyan" },
+  { id: "logs", label: "Logs", icon: <Terminal size={18} />, color: "emerald" },
 ];
 
 function useCurrentTime() {
@@ -224,6 +230,8 @@ export default function App() {
               {activeTab === "warroom" && <WarRoom />}
               {activeTab === "chaos" && <ChaosLabView onSwitchToDashboard={() => setActiveTab("dashboard")} />}
               {activeTab === "blockchain" && <BlockchainView />}
+              {activeTab === "traces" && <TracesView />}
+              {activeTab === "logs" && <PodLogsView />}
             </div>
           </div>
         </main>

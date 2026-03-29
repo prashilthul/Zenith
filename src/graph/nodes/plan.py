@@ -7,7 +7,7 @@ import json
 import logging
 
 from src.graph.state import ClusterState
-from src.llm.client import llm_call_json_sync
+from src.llm.client import llm_call_json_sync, set_current_trace_id
 from src.llm.prompts import PLANNER_SYSTEM_PROMPT
 from src.models import RemediationPlan
 
@@ -121,6 +121,11 @@ def plan_node(state: ClusterState) -> dict:
 
     anomaly = anomalies[idx]
     logger.info("plan_node: planning for %s on %s", anomaly.get("type"), anomaly.get("affected_resource"))
+
+    # Set trace context for LLM call
+    incident_id = state.get("incident_id", "")
+    if incident_id:
+        set_current_trace_id(incident_id, stage="plan")
 
     user_message = (
         f"Anomaly: {json.dumps(anomaly, default=str)}\n\n"

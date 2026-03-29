@@ -60,3 +60,15 @@ export interface AuditEntry {
   decision: string;
   outcome: string;
 }
+
+export interface Trace {
+  trace_id: string;
+  stage: string;
+  model: string;
+  input_preview: string;
+  output_preview: string;
+  input_chars: number;
+  output_chars: number;
+  duration_ms: number;
+  timestamp: string;
+}
