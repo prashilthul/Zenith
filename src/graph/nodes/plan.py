@@ -26,11 +26,11 @@ _FALLBACK_PLANS: dict[str, dict] = {
     },
     "OOMKilled": {
         "action": "patch_deployment_resources",
-        "params": {"memory_limit": "512Mi"},
-        "confidence": 0.6,
-        "blast_radius": "low",
+        "params": {"memory_limit": "+50%"},
+        "confidence": 0.75,
+        "blast_radius": "medium",
         "is_destructive": False,
-        "reasoning": "Increase memory limit to prevent OOMKill.",
+        "reasoning": "Increase memory limit to prevent OOMKill. Routes to HITL — resource changes affect all pods in the deployment.",
     },
     "ImagePullBackOff": {
         "action": "no_op",

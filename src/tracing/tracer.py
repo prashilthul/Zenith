@@ -26,6 +26,8 @@ def record_trace(
         "model": model,
         "input_preview": input_text[:500],
         "output_preview": output_text[:500],
+        "input_full": input_text[:5000],
+        "output_full": output_text[:5000],
         "input_chars": len(input_text),
         "output_chars": len(output_text),
         "duration_ms": duration_ms,

@@ -227,41 +227,43 @@ export default function TracesView() {
                                 </span>
                               </div>
 
-                              {/* Input preview */}
+                              {/* Input — what the LLM received */}
                               <div>
-                                <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">
-                                  Input ({trace.input_chars} chars)
+                                <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                                  LLM Input — {trace.stage === "detect" ? "Raw cluster signals" : trace.stage === "diagnose" ? "kubectl logs + describe output" : trace.stage === "plan" ? "Diagnosis text" : "Full incident context"} ({trace.input_chars} chars)
                                 </div>
-                                <pre className="text-xs font-mono text-slate-400 bg-slate-950/60 rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-words">
+                                <pre className="text-xs font-mono text-slate-400 bg-slate-950/60 rounded-md p-2.5 overflow-x-auto whitespace-pre-wrap break-words max-h-[300px] overflow-y-auto border border-slate-800/50">
                                   {inputExpanded
-                                    ? trace.input_preview
+                                    ? (trace.input_full || trace.input_preview)
                                     : trace.input_preview.slice(0, 200)}
                                   {trace.input_preview.length > 200 && (
                                     <button
                                       onClick={() => togglePreview(inputKey)}
                                       className="text-cyan-500 hover:text-cyan-400 ml-1 cursor-pointer"
                                     >
-                                      {inputExpanded ? " show less" : "... show more"}
+                                      {inputExpanded ? " ▲ collapse" : "... ▼ show full input"}
                                     </button>
                                   )}
                                 </pre>
                               </div>
 
-                              {/* Output preview */}
+                              {/* Output — what the LLM responded */}
                               <div>
-                                <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">
-                                  Output ({trace.output_chars} chars)
+                                <div className="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                  LLM Output — {trace.stage === "detect" ? "Anomaly classification" : trace.stage === "diagnose" ? "Root cause analysis" : trace.stage === "plan" ? "Remediation plan" : "Incident summary"} ({trace.output_chars} chars)
                                 </div>
-                                <pre className="text-xs font-mono text-slate-400 bg-slate-950/60 rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-words">
+                                <pre className="text-xs font-mono text-emerald-300/70 bg-slate-950/60 rounded-md p-2.5 overflow-x-auto whitespace-pre-wrap break-words max-h-[300px] overflow-y-auto border border-slate-800/50">
                                   {outputExpanded
-                                    ? trace.output_preview
+                                    ? (trace.output_full || trace.output_preview)
                                     : trace.output_preview.slice(0, 200)}
                                   {trace.output_preview.length > 200 && (
                                     <button
                                       onClick={() => togglePreview(outputKey)}
-                                      className="text-cyan-500 hover:text-cyan-400 ml-1 cursor-pointer"
+                                      className="text-emerald-500 hover:text-emerald-400 ml-1 cursor-pointer"
                                     >
-                                      {outputExpanded ? " show less" : "... show more"}
+                                      {outputExpanded ? " ▲ collapse" : "... ▼ show full output"}
                                     </button>
                                   )}
                                 </pre>

@@ -67,6 +67,8 @@ export interface Trace {
   model: string;
   input_preview: string;
   output_preview: string;
+  input_full?: string;
+  output_full?: string;
   input_chars: number;
   output_chars: number;
   duration_ms: number;
