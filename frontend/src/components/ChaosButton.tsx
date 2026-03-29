@@ -24,15 +24,13 @@ import { fetchAuditLog, injectSpecificChaos, cleanupChaos, fetchChaosScenarios }
 import type { AuditEntry } from "../types";
 
 const SCENARIO_META: Record<string, { icon: typeof Skull; color: string }> = {
-  "CrashLoop Demo": { icon: Skull, color: "text-red-400" },
-  "CrashLoop Deploy Demo": { icon: Skull, color: "text-red-400" },
-  "OOMKill Demo": { icon: HardDrive, color: "text-yellow-400" },
-  "OOMKill Deploy Demo": { icon: HardDrive, color: "text-yellow-400" },
-  "ImagePull Failure": { icon: Network, color: "text-blue-400" },
+  "CrashLoopBackOff": { icon: Skull, color: "text-red-400" },
+  "OOMKilled": { icon: HardDrive, color: "text-yellow-400" },
+  "ImagePullBackOff": { icon: Network, color: "text-blue-400" },
   "Pending Pod": { icon: Clock, color: "text-orange-400" },
   "Stalled Deployment": { icon: Server, color: "text-purple-400" },
-  "Evicted Demo": { icon: Zap, color: "text-cyan-400" },
-  "Node Pressure Demo": { icon: Cpu, color: "text-amber-400" },
+  "Evicted Pod": { icon: Zap, color: "text-cyan-400" },
+  "Node Pressure": { icon: Cpu, color: "text-amber-400" },
 };
 
 export default function ChaosButton({ onChaosComplete: _unused }: { onChaosComplete?: () => void } = {}) {
@@ -259,7 +257,7 @@ export default function ChaosButton({ onChaosComplete: _unused }: { onChaosCompl
             })}
           </div>
           <p className="text-xs text-slate-500 mt-3 leading-relaxed">
-            Selection is visual only. The backend injects randomized scenarios from its own pool.
+            Select scenarios to inject. Old pods are cleaned up automatically before injection.
           </p>
         </div>
 

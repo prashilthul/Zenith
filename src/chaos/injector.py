@@ -25,15 +25,13 @@ class ChaosScenario:
 
 
 CHAOS_SCENARIOS: list[ChaosScenario] = [
-    ChaosScenario(name="CrashLoop Demo", yaml_path=_MANIFESTS_DIR / "crashloop-demo.yaml"),
-    ChaosScenario(name="CrashLoop Deploy Demo", yaml_path=_MANIFESTS_DIR / "crashloop-deploy-demo.yaml"),
-    ChaosScenario(name="OOMKill Demo", yaml_path=_MANIFESTS_DIR / "oomkill-demo.yaml"),
-    ChaosScenario(name="OOMKill Deploy Demo", yaml_path=_MANIFESTS_DIR / "oomkill-deploy-demo.yaml"),
-    ChaosScenario(name="ImagePull Failure", yaml_path=_MANIFESTS_DIR / "imagepull-demo.yaml"),
+    ChaosScenario(name="CrashLoopBackOff", yaml_path=_MANIFESTS_DIR / "crashloop-demo.yaml"),
+    ChaosScenario(name="OOMKilled", yaml_path=_MANIFESTS_DIR / "oomkill-deploy-demo.yaml"),
+    ChaosScenario(name="ImagePullBackOff", yaml_path=_MANIFESTS_DIR / "imagepull-demo.yaml"),
     ChaosScenario(name="Pending Pod", yaml_path=_MANIFESTS_DIR / "pending-demo.yaml"),
     ChaosScenario(name="Stalled Deployment", yaml_path=_MANIFESTS_DIR / "stalled-deploy.yaml"),
-    ChaosScenario(name="Evicted Demo", yaml_path=_MANIFESTS_DIR / "evicted-demo.yaml"),
-    ChaosScenario(name="Node Pressure Demo", yaml_path=_MANIFESTS_DIR / "node-pressure-demo.yaml"),
+    ChaosScenario(name="Evicted Pod", yaml_path=_MANIFESTS_DIR / "evicted-demo.yaml"),
+    ChaosScenario(name="Node Pressure", yaml_path=_MANIFESTS_DIR / "node-pressure-demo.yaml"),
 ]
 
 
