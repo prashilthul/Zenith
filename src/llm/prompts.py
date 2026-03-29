@@ -91,13 +91,23 @@ Return a **JSON object** with exactly these fields:
 }
 ```
 
+### Preferred actions by anomaly type
+- CrashLoopBackOff -> "delete_pod" (restart by deletion, confidence ~0.9, blast_radius "low", is_destructive false)
+- OOMKilled -> "patch_deployment_resources" with params {"memory_limit": "new_value"} (increase by 50%, blast_radius "low")
+- Pending -> "no_op" with recommendation (blast_radius "medium")
+- ImagePullBackOff -> "no_op" with alert (blast_radius "medium")
+- Evicted -> "delete_pod" (cleanup, blast_radius "low")
+- CPU Throttling -> "patch_deployment_resources" with params {"cpu_limit": "new_value"} (blast_radius "medium")
+- Deployment Stalled -> "rollback_deployment" (blast_radius "high", is_destructive true)
+- Node NotReady -> "no_op" (HITL only, blast_radius "high", is_destructive true)
+
 ### Rules
-- Prefer the least-destructive action that resolves the issue.
-- Mark ``is_destructive`` as true for: rollback_deployment, drain_node,
+- Use the preferred action for each anomaly type listed above.
+- "delete_pod" for CrashLoopBackOff is NOT destructive (controller recreates it).
+- Mark ``is_destructive`` as true ONLY for: rollback_deployment, drain_node,
   delete_namespace, scale_down, force_delete_pod, cordon_node.
 - Set ``blast_radius`` to "high" if the action could affect other workloads.
-- ``confidence`` should reflect how certain you are this action will resolve
-  the issue.
+- ``confidence`` should reflect how certain you are this action will resolve the issue.
 - Output ONLY valid JSON. No markdown fences, no commentary.
 """
 

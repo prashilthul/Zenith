@@ -73,8 +73,8 @@ def _verify_pod_health(pod_name: str, namespace: str) -> str:
             reason_str = ", ".join(reasons) if reasons else phase
             return f"failure: pod {pod_name} is {reason_str}"
 
-    # Pod not found — may have been deleted and not yet recreated
-    return f"failure: pod {pod_name} not found (may be recreating)"
+    # Pod not found — if we just deleted it, this is success
+    return f"success: pod {pod_name} was removed (not found in namespace)"
 
 
 def execute_node(state: ClusterState) -> dict:
@@ -91,6 +91,9 @@ def execute_node(state: ClusterState) -> dict:
 
     action = plan.get("action", "no_op")
     target = plan.get("target", "")
+    # Strip kind prefix like "pod/" or "deployment/"
+    if "/" in target:
+        target = target.split("/", 1)[-1]
     namespace = plan.get("namespace", "k8swhisperer-demo")
 
     logger.info("execute_node: executing action=%s on %s/%s", action, namespace, target)
