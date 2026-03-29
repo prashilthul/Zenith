@@ -41,7 +41,7 @@ def _clear_stale_dedup_entries() -> None:
         logger.exception("Failed to clear dedup cache")
 
 
-async def observation_loop(interval_seconds: int = 30) -> None:
+async def observation_loop(interval_seconds: int = 45) -> None:
     """Periodically invoke the LangGraph pipeline to scan the cluster.
 
     Designed to run as an ``asyncio.Task``.  Catches all exceptions so that

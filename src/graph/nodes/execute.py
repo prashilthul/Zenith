@@ -66,7 +66,21 @@ def _execute_action(plan: dict) -> dict:
     params = plan.get("params", {})
 
     if action == "delete_pod":
-        # Deleting a Deployment-managed pod is fine — the controller recreates it
+        # Check if this pod is owned by a Deployment — if so, scale to 0 instead
+        # of deleting the pod (which just gets recreated in an infinite loop)
+        owning_deploy = _find_owning_deployment(target, namespace)
+        if owning_deploy:
+            logger.info(
+                "delete_pod: pod %s is owned by deployment %s — scaling to 0 instead of delete loop",
+                target, owning_deploy,
+            )
+            try:
+                apps = get_apps_v1()
+                body = {"spec": {"replicas": 0}}
+                apps.patch_namespaced_deployment(name=owning_deploy, namespace=namespace, body=body)
+                return {"status": "success", "message": f"Scaled deployment {owning_deploy} to 0 replicas (was in crash loop)"}
+            except Exception as e:
+                logger.warning("Failed to scale deployment %s: %s, falling back to pod delete", owning_deploy, e)
         return delete_pod(name=target, namespace=namespace)
 
     if action == "patch_deployment_resources":
