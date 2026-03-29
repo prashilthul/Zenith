@@ -7,7 +7,7 @@ import json
 import logging
 
 from src.graph.state import ClusterState
-from src.llm.client import llm_call
+from src.llm.client import llm_call_sync
 from src.llm.prompts import DIAGNOSTICIAN_SYSTEM_PROMPT
 from src.mcp_server.kubectl_tools import (
     describe_pod,
@@ -27,6 +27,9 @@ def _gather_evidence(anomaly: dict) -> str:
     """
     atype = anomaly.get("type", "Unknown")
     resource = anomaly.get("affected_resource", "")
+    # Strip kind prefix like "pod/" or "deployment/" from resource name
+    if "/" in resource:
+        resource = resource.split("/", 1)[-1]
     namespace = anomaly.get("namespace", "k8swhisperer-demo")
     evidence_parts: list[str] = []
 
@@ -120,12 +123,7 @@ def diagnose_node(state: ClusterState) -> dict:
         {"role": "user", "content": user_message},
     ]
 
-    try:
-        diagnosis = asyncio.get_event_loop().run_until_complete(
-            llm_call(messages)
-        )
-    except RuntimeError:
-        diagnosis = asyncio.run(llm_call(messages))
+    diagnosis = llm_call_sync(messages)
 
     if not diagnosis:
         diagnosis = (

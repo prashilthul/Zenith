@@ -10,7 +10,7 @@ from pathlib import Path
 
 from src.config import settings
 from src.graph.state import ClusterState
-from src.llm.client import llm_call
+from src.llm.client import llm_call_sync
 from src.llm.prompts import EXPLAINER_SYSTEM_PROMPT
 from src.mcp_server.slack_tools import send_slack_message
 from src.models import LogEntry
@@ -71,12 +71,7 @@ def explain_node(state: ClusterState) -> dict:
         {"role": "user", "content": user_message},
     ]
 
-    try:
-        summary = asyncio.get_event_loop().run_until_complete(
-            llm_call(messages)
-        )
-    except RuntimeError:
-        summary = asyncio.run(llm_call(messages))
+    summary = llm_call_sync(messages)
 
     if not summary:
         summary = (

@@ -148,3 +148,51 @@ async def llm_call_json(
         max_retries=max_retries,
     )
     return _extract_json(raw)
+
+
+# ── Synchronous wrappers for use in LangGraph nodes ───────────────────
+
+
+def llm_call_sync(
+    messages: list[dict[str, str]],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.2,
+) -> str:
+    """Synchronous LLM call using litellm.completion (not async)."""
+    model = model or settings.LITELLM_MODEL_FAST
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if settings.LLM_API_KEY:
+        kwargs["api_key"] = settings.LLM_API_KEY
+    if settings.LLM_BASE_URL:
+        kwargs["api_base"] = settings.LLM_BASE_URL
+
+    for attempt in range(3):
+        try:
+            response = litellm.completion(**kwargs)
+            return response.choices[0].message.content
+        except Exception as exc:
+            logger.warning("Sync LLM attempt %d/3 failed: %s", attempt + 1, exc)
+            import time
+            time.sleep(2 ** attempt)
+    return ""
+
+
+def llm_call_json_sync(
+    messages: list[dict[str, str]],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.2,
+) -> Any:
+    """Synchronous LLM call that returns parsed JSON."""
+    raw = llm_call_sync(messages, model=model, temperature=temperature)
+    if not raw:
+        return None
+    try:
+        return _extract_json(raw)
+    except ValueError:
+        return None

@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 
 from src.graph.state import ClusterState
-from src.llm.client import llm_call_json
+from src.llm.client import llm_call_json_sync
 from src.llm.prompts import CLASSIFIER_SYSTEM_PROMPT
 from src.models import Anomaly
 
@@ -100,13 +100,7 @@ def detect_node(state: ClusterState) -> dict:
         {"role": "user", "content": user_message},
     ]
 
-    try:
-        raw_anomalies = asyncio.get_event_loop().run_until_complete(
-            llm_call_json(messages)
-        )
-    except RuntimeError:
-        # No running event loop — create one
-        raw_anomalies = asyncio.run(llm_call_json(messages))
+    raw_anomalies = llm_call_json_sync(messages)
 
     if not isinstance(raw_anomalies, list):
         logger.warning("Classifier returned non-list: %s", type(raw_anomalies))

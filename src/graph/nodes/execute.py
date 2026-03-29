@@ -23,6 +23,9 @@ def _execute_action(plan: dict) -> dict:
     """Map a plan action to the corresponding kubectl tool call."""
     action = plan.get("action", "")
     target = plan.get("target", "")
+    # Strip kind prefix like "pod/" or "deployment/" from target name
+    if "/" in target:
+        target = target.split("/", 1)[-1]
     namespace = plan.get("namespace", "k8swhisperer-demo")
     params = plan.get("params", {})
 

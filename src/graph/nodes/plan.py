@@ -7,7 +7,7 @@ import json
 import logging
 
 from src.graph.state import ClusterState
-from src.llm.client import llm_call_json
+from src.llm.client import llm_call_json_sync
 from src.llm.prompts import PLANNER_SYSTEM_PROMPT
 from src.models import RemediationPlan
 
@@ -108,12 +108,7 @@ def plan_node(state: ClusterState) -> dict:
         {"role": "user", "content": user_message},
     ]
 
-    try:
-        raw_plan = asyncio.get_event_loop().run_until_complete(
-            llm_call_json(messages)
-        )
-    except RuntimeError:
-        raw_plan = asyncio.run(llm_call_json(messages))
+    raw_plan = llm_call_json_sync(messages)
 
     if not isinstance(raw_plan, dict) or "action" not in raw_plan:
         logger.warning("Planner LLM returned invalid plan; using fallback")
