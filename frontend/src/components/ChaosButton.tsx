@@ -22,7 +22,7 @@ export default function ChaosButton() {
 
     try {
       const result = await triggerChaos(3);
-      setInjected(result.injected ?? []);
+      setInjected((result as any).injected ?? (result as any).scenarios?.map((s: any) => s.scenario) ?? ["Chaos injected"]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chaos failed (ironic)");
     } finally {

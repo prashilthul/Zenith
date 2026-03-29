@@ -41,7 +41,7 @@ export default function WarRoom() {
         ...prev,
         {
           role: "agent",
-          content: response.content ?? String(response),
+          content: (response as any).response ?? (response as any).content ?? String(response),
           timestamp: new Date().toISOString(),
         },
       ]);
@@ -105,7 +105,7 @@ export default function WarRoom() {
             >
               <p className="text-sm font-mono whitespace-pre-wrap">{msg.content}</p>
               <span className="text-xs text-slate-600 font-mono mt-1 block">
-                {new Date(msg.timestamp).toLocaleTimeString()}
+                {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ""}
               </span>
             </div>
           </div>

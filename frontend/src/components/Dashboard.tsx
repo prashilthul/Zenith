@@ -1,21 +1,25 @@
 import { useState, useEffect } from "react";
-import { Activity, CheckCircle, UserCheck, Clock, RefreshCw } from "lucide-react";
+import { Activity, CheckCircle, AlertTriangle, Clock, RefreshCw } from "lucide-react";
 import { fetchIncidents, fetchClusterState } from "../lib/api";
 import type { Incident, ClusterState, PodStatus } from "../types";
 import IncidentCard from "./IncidentCard";
 import ChaosButton from "./ChaosButton";
-import MTTRChart from "./MTTRChart";
 
 function podColor(pod: PodStatus): string {
-  if (pod.status === "Running" && pod.restarts === 0) return "bg-emerald-500";
-  if (pod.status === "Running" && pod.restarts > 0) return "bg-yellow-500";
-  if (pod.status === "CrashLoopBackOff" || pod.status === "Failed") return "bg-red-500";
-  if (pod.status === "Pending") return "bg-yellow-400";
+  const phase = pod.phase;
+  const restarts = pod.containers?.reduce((s, c) => s + (c.restart_count || 0), 0) || 0;
+  if (phase === "Running" && restarts === 0) return "bg-emerald-500";
+  if (phase === "Running" && restarts > 0) return "bg-yellow-500";
+  if (phase === "Failed" || pod.containers?.some(c => c.reason === "CrashLoopBackOff" || c.reason === "Error")) return "bg-red-500";
+  if (phase === "Pending") return "bg-yellow-400";
+  if (phase === "Succeeded") return "bg-blue-400";
   return "bg-slate-500";
 }
 
 function podTooltip(pod: PodStatus): string {
-  return `${pod.namespace}/${pod.name} [${pod.status}] restarts:${pod.restarts}`;
+  const restarts = pod.containers?.reduce((s, c) => s + (c.restart_count || 0), 0) || 0;
+  const reason = pod.containers?.find(c => c.reason)?.reason || pod.phase;
+  return `${pod.namespace}/${pod.name}\n${reason} | restarts: ${restarts}`;
 }
 
 export default function Dashboard() {
@@ -44,127 +48,65 @@ export default function Dashboard() {
   }, []);
 
   const totalIncidents = incidents.length;
-  const autoFixed = incidents.filter(
-    (i) => i.stage === "verified" && !i.remediation_plan?.requires_approval
-  ).length;
-  const hitlApproved = incidents.filter(
-    (i) => i.stage === "verified" && i.remediation_plan?.requires_approval
-  ).length;
-  const resolved = incidents.filter((i) => i.resolution_time_seconds != null);
-  const avgMTTR =
-    resolved.length > 0
-      ? resolved.reduce((s, i) => s + (i.resolution_time_seconds ?? 0), 0) / resolved.length
-      : 0;
+  const resolved = incidents.filter(i => i.outcome?.startsWith("success")).length;
+  const failed = incidents.filter(i => i.outcome?.startsWith("failure")).length;
+  const pending = totalIncidents - resolved - failed;
 
   return (
     <div className="space-y-6">
       {/* Stats Bar */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          icon={<Activity size={20} />}
-          label="Total Incidents"
-          value={totalIncidents}
-          color="text-cyan-400"
-        />
-        <StatCard
-          icon={<CheckCircle size={20} />}
-          label="Auto-Fixed"
-          value={autoFixed}
-          color="text-emerald-400"
-        />
-        <StatCard
-          icon={<UserCheck size={20} />}
-          label="HITL Approved"
-          value={hitlApproved}
-          color="text-yellow-400"
-        />
-        <StatCard
-          icon={<Clock size={20} />}
-          label="Avg MTTR"
-          value={avgMTTR > 0 ? `${avgMTTR.toFixed(1)}s` : "--"}
-          color="text-teal-400"
-        />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard icon={<Activity className="w-5 h-5 text-cyan-400" />} label="Total Incidents" value={totalIncidents} />
+        <StatCard icon={<CheckCircle className="w-5 h-5 text-emerald-400" />} label="Resolved" value={resolved} />
+        <StatCard icon={<AlertTriangle className="w-5 h-5 text-red-400" />} label="Failed / Pending" value={failed + pending} />
+        <StatCard icon={<Clock className="w-5 h-5 text-yellow-400" />} label="Last Scan" value={lastUpdate.toLocaleTimeString()} small />
       </div>
 
-      {/* Main grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Cluster + Chart */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Cluster Status */}
-          <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-mono uppercase tracking-wider text-slate-400">
-                Cluster Status
-              </h3>
-              <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
-                <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-                {lastUpdate.toLocaleTimeString()}
-              </div>
-            </div>
-            {cluster?.pods && cluster.pods.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {cluster.pods.map((pod, i) => (
-                  <div
-                    key={i}
-                    className={`w-4 h-4 rounded-full ${podColor(pod)} opacity-80 hover:opacity-100 hover:scale-150 transition-all cursor-pointer`}
-                    title={podTooltip(pod)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm text-slate-500 font-mono">
-                No cluster data (API unavailable or no pods)
-              </div>
-            )}
-            <div className="flex items-center gap-4 mt-3 text-xs text-slate-500 font-mono">
-              <span className="flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Healthy
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-yellow-500" /> Warning
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500" /> Critical
-              </span>
-            </div>
-          </div>
-
-          {/* MTTR Chart */}
-          <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5">
-            <h3 className="text-sm font-mono uppercase tracking-wider text-slate-400 mb-4">
-              Resolution Time Breakdown
-            </h3>
-            <MTTRChart incidents={incidents} />
-          </div>
+      {/* Cluster Status */}
+      <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">Cluster Pods</h2>
+          <button onClick={load} className="text-slate-400 hover:text-cyan-400 transition">
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
         </div>
-
-        {/* Right: Chaos Button */}
-        <div className="space-y-6">
-          <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-6 flex flex-col items-center">
-            <h3 className="text-sm font-mono uppercase tracking-wider text-slate-400 mb-6">
-              Chaos Engineering
-            </h3>
-            <ChaosButton />
-          </div>
+        <div className="flex flex-wrap gap-2">
+          {cluster?.pods?.map((pod) => (
+            <div
+              key={`${pod.namespace}/${pod.name}`}
+              className={`w-8 h-8 rounded-full ${podColor(pod)} opacity-90 hover:opacity-100 cursor-pointer transition-all hover:scale-110 ${
+                podColor(pod) === "bg-red-500" ? "animate-pulse" : ""
+              }`}
+              title={podTooltip(pod)}
+            />
+          )) || <p className="text-slate-500 text-sm">No pods found</p>}
         </div>
+        {cluster?.nodes && cluster.nodes.length > 0 && (
+          <div className="mt-3 text-xs text-slate-500">
+            Nodes: {cluster.nodes.map(n => n.name).join(", ")}
+          </div>
+        )}
+      </div>
+
+      {/* Chaos Button */}
+      <div className="flex justify-center">
+        <ChaosButton />
       </div>
 
       {/* Incident Timeline */}
-      <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-5">
-        <h3 className="text-sm font-mono uppercase tracking-wider text-slate-400 mb-4">
-          Live Incident Timeline
-        </h3>
+      <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+        <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">
+          Incident Timeline ({incidents.length})
+        </h2>
         {incidents.length === 0 ? (
-          <div className="text-sm text-slate-500 font-mono py-8 text-center">
-            {loading ? "Loading incidents..." : "No incidents detected. Launch some chaos!"}
-          </div>
+          <p className="text-slate-500 text-sm text-center py-8">
+            No incidents yet. The agent is monitoring your cluster...
+          </p>
         ) : (
-          <div className="space-y-3">
-            {[...incidents]
-              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-              .map((incident) => (
-                <IncidentCard key={incident.id} incident={incident} compact />
-              ))}
+          <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+            {[...incidents].reverse().map((inc) => (
+              <IncidentCard key={inc.incident_id} incident={inc} />
+            ))}
           </div>
         )}
       </div>
@@ -172,26 +114,11 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({
-  icon,
-  label,
-  value,
-  color,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string | number;
-  color: string;
-}) {
+function StatCard({ icon, label, value, small }: { icon: React.ReactNode; label: string; value: string | number; small?: boolean }) {
   return (
-    <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <span className={color}>{icon}</span>
-        <span className="text-xs font-mono uppercase tracking-wider text-slate-500">
-          {label}
-        </span>
-      </div>
-      <div className={`text-2xl font-bold font-mono ${color}`}>{value}</div>
+    <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+      <div className="flex items-center gap-2 mb-1">{icon}<span className="text-xs text-slate-400">{label}</span></div>
+      <div className={`font-mono ${small ? "text-sm text-slate-300" : "text-2xl text-white"}`}>{value}</div>
     </div>
   );
 }

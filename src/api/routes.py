@@ -99,11 +99,33 @@ async def list_incidents() -> list[dict[str, Any]]:
                 "stages": [],
                 "summary": entry.get("summary", ""),
                 "outcome": entry.get("outcome", ""),
+                "anomaly_type": None,
+                "severity": None,
+                "affected_resource": None,
+                "namespace": None,
+                "confidence": None,
+                "action": None,
+                "blast_radius": None,
             }
         incidents[iid]["stages"].append(entry.get("stage"))
         incidents[iid]["summary"] = entry.get("summary", incidents[iid]["summary"])
         incidents[iid]["outcome"] = entry.get("outcome", incidents[iid]["outcome"])
         incidents[iid]["last_seen"] = entry.get("timestamp")
+        # Extract anomaly and plan details from entry details
+        details = entry.get("details", {})
+        anomaly = details.get("anomaly", {})
+        plan = details.get("plan", {})
+        if anomaly.get("type"):
+            incidents[iid]["anomaly_type"] = anomaly["type"]
+            incidents[iid]["severity"] = anomaly.get("severity")
+            incidents[iid]["affected_resource"] = anomaly.get("affected_resource")
+            incidents[iid]["namespace"] = anomaly.get("namespace")
+            incidents[iid]["confidence"] = anomaly.get("confidence")
+        if plan.get("action"):
+            incidents[iid]["action"] = plan["action"]
+            incidents[iid]["blast_radius"] = plan.get("blast_radius")
+            if plan.get("confidence"):
+                incidents[iid]["confidence"] = plan["confidence"]
 
     return list(incidents.values())
 

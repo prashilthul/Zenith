@@ -1,4 +1,4 @@
-import type { Incident, ClusterState, ChatMessage, ChaosResult } from "../types";
+import type { Incident, ClusterState, ChaosResult, AuditEntry } from "../types";
 
 const API_BASE = "http://localhost:8000";
 
@@ -17,12 +17,12 @@ export async function fetchIncidents(): Promise<Incident[]> {
   return request<Incident[]>("/api/incidents");
 }
 
-export async function fetchAuditLog(): Promise<Incident[]> {
-  return request<Incident[]>("/api/incidents");
+export async function fetchAuditLog(): Promise<AuditEntry[]> {
+  return request<AuditEntry[]>("/api/audit-log");
 }
 
-export async function sendChat(message: string): Promise<ChatMessage> {
-  return request<ChatMessage>("/api/chat", {
+export async function sendChat(message: string): Promise<{ response: string }> {
+  return request<{ response: string }>("/api/chat", {
     method: "POST",
     body: JSON.stringify({ message }),
   });
