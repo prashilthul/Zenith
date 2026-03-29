@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from src.config import settings
 from src.graph.state import ClusterState
-from src.utils.k8s_client import get_apps_v1, get_core_v1
+from src.utils.k8s_client import get_apps_v1, get_autoscaling_v1, get_core_v1
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,56 @@ def observe_node(state: ClusterState) -> dict:
                     })
         except Exception:
             logger.exception("Failed to check deployment rollout status")
+
+        # ── HPA status ──────────────────────────────────────────────────
+        try:
+            autoscaling = get_autoscaling_v1()
+            hpa_list = autoscaling.list_namespaced_horizontal_pod_autoscaler(
+                namespace=namespace,
+            )
+            for hpa in hpa_list.items:
+                current_replicas = hpa.status.current_replicas or 0
+                desired_replicas = hpa.status.desired_replicas or 0
+                current_cpu = hpa.status.current_cpu_utilization_percentage
+                target_cpu = hpa.spec.target_cpu_utilization_percentage
+
+                hpa_event = {
+                    "kind": "HPA",
+                    "name": hpa.metadata.name,
+                    "namespace": hpa.metadata.namespace,
+                    "min_replicas": hpa.spec.min_replicas,
+                    "max_replicas": hpa.spec.max_replicas,
+                    "current_replicas": current_replicas,
+                    "desired_replicas": desired_replicas,
+                    "current_cpu_utilization_percentage": current_cpu,
+                    "target_cpu_utilization_percentage": target_cpu,
+                    "scaling_active": current_replicas != desired_replicas,
+                    "target_ref": hpa.spec.scale_target_ref.name if hpa.spec.scale_target_ref else None,
+                    "timestamp": _iso(hpa.metadata.creation_timestamp),
+                }
+                normalised.append(hpa_event)
+
+                # Emit an additional scaling event when HPA is actively scaling
+                if current_replicas != desired_replicas:
+                    normalised.append({
+                        "kind": "Event",
+                        "name": hpa.metadata.name,
+                        "namespace": hpa.metadata.namespace,
+                        "reason": "HPAScaling",
+                        "message": (
+                            f"HPA '{hpa.metadata.name}' is scaling "
+                            f"'{hpa.spec.scale_target_ref.name}' from "
+                            f"{current_replicas} to {desired_replicas} replicas "
+                            f"(CPU utilization: {current_cpu}%, target: {target_cpu}%)"
+                        ),
+                        "type": "Normal",
+                        "count": 1,
+                        "first_seen": _iso(hpa.metadata.creation_timestamp),
+                        "last_seen": _iso(datetime.now(timezone.utc)),
+                        "involved_kind": "HorizontalPodAutoscaler",
+                    })
+        except Exception:
+            logger.exception("Failed to check HPA status")
 
     except Exception:
         logger.exception("observe_node failed to collect cluster state")

@@ -56,6 +56,26 @@ def _validate_anomaly(anomaly: dict, events: list[dict]) -> bool:
         # If we can't find the pod in events, let the anomaly through
         return True
 
+    if atype == "CPUThrottling":
+        # Verify from HPA or pod resource data that CPU is near limits
+        for ev in events:
+            if ev.get("kind") == "HPA" and ev.get("name") == resource:
+                current_cpu = ev.get("current_cpu_utilization_percentage")
+                target_cpu = ev.get("target_cpu_utilization_percentage")
+                if current_cpu is not None and target_cpu is not None:
+                    if current_cpu < target_cpu * 0.8:
+                        logger.info(
+                            "Skipping CPUThrottling for %s: CPU utilization %d%% "
+                            "well below target %d%%",
+                            resource, current_cpu, target_cpu,
+                        )
+                        return False
+                return True
+            # Also accept pod-level CPU evidence
+            if ev.get("kind") == "Pod" and ev.get("name") == resource:
+                return True
+        return True
+
     if atype == "Pending":
         # Verify pod has been Pending for > 5 minutes
         for ev in events:

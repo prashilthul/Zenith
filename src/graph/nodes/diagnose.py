@@ -15,6 +15,7 @@ from src.mcp_server.kubectl_tools import (
     get_nodes,
     get_pod_logs,
 )
+from src.graph.nodes.execute import _find_owning_deployment
 from src.utils.log_chunker import chunk_logs
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,16 @@ def _gather_evidence(anomaly: dict) -> str:
 
             prev_logs = get_pod_logs(name=resource, namespace=namespace, previous=True, tail_lines=100)
             evidence_parts.append(f"=== Previous Container Logs ===\n{chunk_logs(prev_logs)}")
+
+            # Check if the pod is managed by a Deployment so the planner
+            # can target the Deployment for resource patching
+            owning_deploy = _find_owning_deployment(resource, namespace)
+            if owning_deploy:
+                evidence_parts.append(
+                    f"=== Owning Deployment ===\n"
+                    f"Pod '{resource}' is managed by Deployment '{owning_deploy}'. "
+                    f"Resource limit changes should target deployment/{owning_deploy}."
+                )
 
         elif atype in ("Pending", "FailedScheduling"):
             # Describe (scheduling) + node capacity

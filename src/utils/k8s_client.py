@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Tuple
 
 from kubernetes import client, config
-from kubernetes.client import AppsV1Api, CoreV1Api
+from kubernetes.client import AppsV1Api, AutoscalingV1Api, CoreV1Api
 
 from src.config import settings
 
@@ -68,3 +68,9 @@ def get_apps_v1() -> AppsV1Api:
     """Return an AppsV1Api client."""
     _ensure_config()
     return client.AppsV1Api()
+
+
+def get_autoscaling_v1() -> AutoscalingV1Api:
+    """Return an AutoscalingV1Api client."""
+    _ensure_config()
+    return client.AutoscalingV1Api()

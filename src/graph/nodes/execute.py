@@ -12,11 +12,47 @@ from src.mcp_server.kubectl_tools import (
     patch_deployment_resources,
     rollback_deployment,
 )
+from src.utils.k8s_client import get_apps_v1, get_core_v1
 
 logger = logging.getLogger(__name__)
 
 # Backoff schedule for verification (seconds)
 _VERIFY_BACKOFFS = [5, 10, 20, 40, 60]
+
+
+def _find_owning_deployment(pod_name: str, namespace: str) -> str | None:
+    """Find the Deployment that owns a given pod via ownerReferences.
+
+    Walks the chain: Pod -> ReplicaSet -> Deployment.
+    Returns the Deployment name, or None if the pod is not Deployment-managed.
+    """
+    try:
+        core = get_core_v1()
+        pod = core.read_namespaced_pod(name=pod_name, namespace=namespace)
+
+        # Find the owning ReplicaSet
+        rs_name: str | None = None
+        for ref in pod.metadata.owner_references or []:
+            if ref.kind == "ReplicaSet":
+                rs_name = ref.name
+                break
+
+        if rs_name is None:
+            return None
+
+        # Find the Deployment that owns the ReplicaSet
+        apps = get_apps_v1()
+        rs = apps.read_namespaced_replica_set(name=rs_name, namespace=namespace)
+        for ref in rs.metadata.owner_references or []:
+            if ref.kind == "Deployment":
+                return ref.name
+
+        return None
+    except Exception:
+        logger.exception(
+            "Failed to find owning deployment for pod %s/%s", namespace, pod_name
+        )
+        return None
 
 
 def _execute_action(plan: dict) -> dict:
@@ -30,11 +66,22 @@ def _execute_action(plan: dict) -> dict:
     params = plan.get("params", {})
 
     if action == "delete_pod":
+        # Deleting a Deployment-managed pod is fine — the controller recreates it
         return delete_pod(name=target, namespace=namespace)
 
     if action == "patch_deployment_resources":
+        # The target might be a pod name; we need the owning Deployment name
+        deploy_name = target
+        owning = _find_owning_deployment(target, namespace)
+        if owning:
+            logger.info(
+                "patch_deployment_resources: resolved pod %s to deployment %s",
+                target,
+                owning,
+            )
+            deploy_name = owning
         return patch_deployment_resources(
-            name=target,
+            name=deploy_name,
             namespace=namespace,
             container_name=params.get("container_name", ""),
             memory_limit=params.get("memory_limit", ""),
@@ -42,7 +89,12 @@ def _execute_action(plan: dict) -> dict:
         )
 
     if action == "rollback_deployment":
-        return rollback_deployment(name=target, namespace=namespace)
+        # Also resolve pod -> deployment if needed
+        deploy_name = target
+        owning = _find_owning_deployment(target, namespace)
+        if owning:
+            deploy_name = owning
+        return rollback_deployment(name=deploy_name, namespace=namespace)
 
     if action == "no_op":
         return {"status": "no_op", "message": "No action taken per plan."}

@@ -11,7 +11,7 @@ from typing import Any
 from kubernetes.client import V1DeleteOptions
 from mcp.server.fastmcp import FastMCP
 
-from src.utils.k8s_client import get_apps_v1, get_core_v1
+from src.utils.k8s_client import get_apps_v1, get_autoscaling_v1, get_core_v1
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +399,58 @@ def rollback_deployment(name: str, namespace: str = "k8swhisperer-demo") -> dict
 
 
 # ── Deployments ──────────────────────────────────────────────────────────
+
+
+@mcp_server.tool()
+def get_hpa(namespace: str = "k8swhisperer-demo") -> list[dict]:
+    """List Horizontal Pod Autoscalers with current/desired/max replicas and CPU utilization."""
+    try:
+        autoscaling = get_autoscaling_v1()
+        hpa_list = autoscaling.list_namespaced_horizontal_pod_autoscaler(namespace=namespace)
+        results: list[dict] = []
+        for hpa in hpa_list.items:
+            results.append(
+                {
+                    "name": hpa.metadata.name,
+                    "namespace": hpa.metadata.namespace,
+                    "target": hpa.spec.scale_target_ref.name if hpa.spec.scale_target_ref else None,
+                    "min_replicas": hpa.spec.min_replicas,
+                    "max_replicas": hpa.spec.max_replicas,
+                    "current_replicas": hpa.status.current_replicas or 0,
+                    "desired_replicas": hpa.status.desired_replicas or 0,
+                    "current_cpu_utilization_percentage": hpa.status.current_cpu_utilization_percentage,
+                    "target_cpu_utilization_percentage": hpa.spec.target_cpu_utilization_percentage,
+                    "scaling_active": (hpa.status.current_replicas or 0) != (hpa.status.desired_replicas or 0),
+                }
+            )
+        return results
+    except Exception as exc:
+        logger.exception("get_hpa failed")
+        return [_error("Failed to list HPAs", exc)]
+
+
+@mcp_server.tool()
+def scale_deployment(
+    name: str,
+    namespace: str = "k8swhisperer-demo",
+    replicas: int = 1,
+) -> dict:
+    """Manually scale a deployment to the specified number of replicas."""
+    try:
+        apps = get_apps_v1()
+        patch_body = {"spec": {"replicas": replicas}}
+        apps.patch_namespaced_deployment_scale(
+            name=name, namespace=namespace, body=patch_body,
+        )
+        return {
+            "status": "scaled",
+            "deployment": name,
+            "namespace": namespace,
+            "replicas": replicas,
+        }
+    except Exception as exc:
+        logger.exception("scale_deployment failed for %s/%s", namespace, name)
+        return _error("Failed to scale deployment", exc)
 
 
 @mcp_server.tool()

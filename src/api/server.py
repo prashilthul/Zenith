@@ -16,27 +16,13 @@ from src.slack.webhook import router as slack_router
 logger = logging.getLogger(__name__)
 
 
-async def _observation_loop() -> None:
-    """Periodically invoke the LangGraph pipeline to scan the cluster.
-
-    Runs every 30 seconds, catches all exceptions to stay alive.
-    """
-    from src.graph.builder import run_pipeline
-
-    while True:
-        try:
-            logger.info("Observation loop: starting pipeline run")
-            run_pipeline()
-        except Exception:
-            logger.exception("Observation loop: pipeline run failed")
-        await asyncio.sleep(30)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: start background observation loop on startup."""
-    task = asyncio.create_task(_observation_loop())
-    logger.info("Observation loop background task started")
+    from src.main import observation_loop
+
+    task = asyncio.create_task(observation_loop(interval_seconds=30))
+    logger.info("Observation loop background task started (30s interval)")
     yield
     task.cancel()
     try:
