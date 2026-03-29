@@ -1,6 +1,6 @@
 import type { Incident, ClusterState, ChaosResult, AuditEntry } from "../types";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -29,9 +29,11 @@ export async function sendChat(message: string): Promise<{ response: string }> {
 }
 
 export async function triggerChaos(count: number = 3): Promise<ChaosResult> {
-  return request<ChaosResult>(`/api/chaos?count=${count}`, {
+  const res = await fetch(`${API_BASE}/api/chaos?count=${count}`, {
     method: "POST",
   });
+  if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
+  return res.json();
 }
 
 export async function fetchClusterState(): Promise<ClusterState> {

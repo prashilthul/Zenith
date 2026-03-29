@@ -243,12 +243,11 @@ async def get_cluster_state() -> dict[str, Any]:
 
 
 @router.post("/chaos")
-async def inject_chaos(body: ChaosRequest | None = None, count: int = 3) -> dict[str, Any]:
+async def inject_chaos(count: int = 3) -> dict[str, Any]:
     """Inject chaos scenarios into the cluster for demo purposes."""
     from src.chaos.injector import inject_chaos as do_inject
 
-    n = body.count if body else count
-    results = await do_inject(count=n)
+    results = await do_inject(count=count)
     return {"injected": len(results), "scenarios": results}
 
 
