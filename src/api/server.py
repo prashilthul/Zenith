@@ -1,0 +1,77 @@
+"""Main FastAPI application for K8sWhisperer."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from src.api.routes import router as api_router
+from src.slack.webhook import router as slack_router
+
+logger = logging.getLogger(__name__)
+
+
+async def _observation_loop() -> None:
+    """Periodically invoke the LangGraph pipeline to scan the cluster.
+
+    Runs every 30 seconds, catches all exceptions to stay alive.
+    """
+    from src.graph.builder import run_pipeline
+
+    while True:
+        try:
+            logger.info("Observation loop: starting pipeline run")
+            run_pipeline()
+        except Exception:
+            logger.exception("Observation loop: pipeline run failed")
+        await asyncio.sleep(30)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan: start background observation loop on startup."""
+    task = asyncio.create_task(_observation_loop())
+    logger.info("Observation loop background task started")
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        logger.info("Observation loop background task cancelled")
+
+
+app = FastAPI(
+    title="K8sWhisperer",
+    description="AI-powered Kubernetes incident detection, diagnosis, and remediation",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# ── CORS (permissive for hackathon) ─────────────────────────────────────────
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Routers ─────────────────────────────────────────────────────────────────
+
+app.include_router(api_router)
+app.include_router(slack_router)
+
+
+# ── Health check ────────────────────────────────────────────────────────────
+
+
+@app.get("/health")
+async def health_check() -> dict[str, str]:
+    """Simple liveness probe."""
+    return {"status": "ok"}
