@@ -1,183 +1,208 @@
-# K8sWhisperer Architecture
+# K8sWhisperer — Architecture & Agent System
 
-## System Overview
+## Our 5 Agents
 
-```
-                    +--------------------------------------------------+
-                    |              K8sWhisperer System                  |
-                    +--------------------------------------------------+
-                    |                                                  |
-    +---------------v----------------+    +------------------------+  |
-    |    Observation Loop (30s)      |    |   FastAPI Server       |  |
-    |    Continuous cluster scan     |    |   :8000                |  |
-    +---------------+----------------+    |                        |  |
-                    |                     |  POST /slack/actions   |  |
-                    v                     |  GET  /api/incidents   |  |
-    +-------------------------------------------+  POST /api/chat |  |
-    |         LangGraph StateGraph               |  POST /api/chaos|  |
-    |         (InMemorySaver Checkpointer)       |  WS   /api/ws   |  |
-    |                                            +--------+--------+  |
-    |  +----------+    +-----------+    +-------+         |           |
-    |  | OBSERVE  |--->|  DETECT   |--->|DIAGNOSE|        |           |
-    |  | kubectl  |    | LLM       |    | LLM +  |        |           |
-    |  | poll     |    | classifier|    | kubectl |        |           |
-    |  +----------+    +-----------+    +---+----+        |           |
-    |                                      |              |           |
-    |                                      v              |           |
-    |                                  +--------+         |           |
-    |                                  |  PLAN  |         |           |
-    |                                  |  LLM   |         |           |
-    |                                  +---+----+         |           |
-    |                                      |              |           |
-    |                          +-----------v-----------+  |           |
-    |                          |     SAFETY GATE       |  |           |
-    |                          | conf>0.8 & blast=low  |  |           |
-    |                          | & !destructive        |  |           |
-    |                          +---+---------------+---+  |           |
-    |                              |               |      |           |
-    |                         AUTO |          HITL |      |           |
-    |                              v               v      |           |
-    |                        +---------+    +----------+  |           |
-    |                        | EXECUTE |    |HITL NODE |  |           |
-    |                        | kubectl |    |interrupt()|  |           |
-    |                        | + verify|    +----+-----+  |           |
-    |                        +----+----+         |        |           |
-    |                             |         Slack|Webhook |           |
-    |                             v              v        |           |
-    |                        +---------+   +----------+   |           |
-    |                        | EXPLAIN |<--| Approve/ |   |           |
-    |                        | LLM +   |   | Reject   |   |           |
-    |                        | audit   |   +----------+   |           |
-    |                        +----+----+                  |           |
-    |                             |                       |           |
-    |                    Loop back to OBSERVE             |           |
-    +----------------------------------------------------+-----------+
-                    |                    |
-          +---------v--------+  +--------v--------+
-          | Kubernetes       |  |     Slack       |
-          | Cluster (kind)   |  |   Workspace     |
-          |                  |  |                 |
-          | - Pods           |  | - Notifications|
-          | - Deployments    |  | - Approve/Reject|
-          | - Nodes          |  | - Audit posts  |
-          | - Events         |  |                 |
-          | - HPA            |  |                 |
-          +------------------+  +-----------------+
-```
+| Agent | Model | Role | Tools |
+|-------|-------|------|-------|
+| **Commander** | Opus | Supervisor — decides which agent to call | Delegates only |
+| **Scout** | Sonnet | Cluster recon — gathers data | `get_pods`, `get_events`, `get_nodes` (READ-ONLY) |
+| **Doctor** | Opus | Root cause analysis — deep reasoning | `get_logs`, `describe_pod` (READ-ONLY) |
+| **Executor** | Sonnet | Remediation — executes fixes | `delete_pod`, `patch_deploy`, `rollback` (WRITE) |
+| **Comms** | Sonnet | Notifications — talks to humans | `send_slack_message`, `send_approval` (SLACK) |
 
-## LangGraph Node Graph
+---
 
-```
-START --> observe --> detect --[anomalies?]--> diagnose --> plan
-                        |                                    |
-                     [none]                          safety_router
-                        |                           /            \
-                       END                    [AUTO]              [HITL]
-                                                |                   |
-                                            execute            hitl_node
-                                                |              (interrupt)
-                                           verify_check            |
-                                           /          \        [Slack]
-                                      [success]    [fail]         |
-                                          |       (retry<3)  [resume]
-                                       explain   --> diagnose     |
-                                          |                   execute
-                                     [loop to observe]            |
-                                                              explain
+## Full System Architecture
+
+```mermaid
+graph TB
+    subgraph K8s["Kubernetes Cluster"]
+        PODS[Pods]
+        EVENTS[Events]
+        DEPLOY[Deployments]
+        HPA[HPA]
+    end
+
+    subgraph Pipeline["7-Stage LangGraph Pipeline"]
+        OBS["1. OBSERVE<br/>Poll every 45s"]
+        DET["2. DETECT<br/>LLM classifies anomalies"]
+        DIAG["3. DIAGNOSE<br/>Fetch logs → LLM root cause"]
+        PLAN["4. PLAN<br/>LLM generates fix"]
+        GATE["5. SAFETY GATE"]
+        EXEC["6. EXECUTE<br/>kubectl + verify loop"]
+        EXPL["7. EXPLAIN<br/>Summary + audit + Slack"]
+    end
+
+    subgraph Routing["Safety Routing"]
+        AUTO["AUTO-EXECUTE<br/>conf>0.8, blast=low"]
+        HITL["HITL<br/>Slack Approve/Reject"]
+    end
+
+    subgraph Agents["Multi-Agent Swarm"]
+        CMD["Commander<br/>Opus"]
+        SCT["Scout<br/>Sonnet"]
+        DOC["Doctor<br/>Opus"]
+        EXE["Executor<br/>Sonnet"]
+        COM["Comms<br/>Sonnet"]
+    end
+
+    subgraph Storage["Integrations"]
+        AUDIT["Audit Log"]
+        RUNBOOK["Runbook Cache"]
+        SLACK["Slack"]
+        CHAIN["Stellar Blockchain"]
+        DASH["React Dashboard"]
+    end
+
+    K8s --> OBS --> DET --> DIAG --> PLAN --> GATE
+    GATE -->|Safe| AUTO --> EXEC
+    GATE -->|Risky| HITL -->|Approved| EXEC
+    HITL -->|Rejected| EXPL
+    EXEC -->|Success| EXPL
+    EXEC -->|"Failure (retry<3)"| DIAG
+    EXPL --> AUDIT & RUNBOOK & SLACK & CHAIN
+
+    CMD --> SCT & DOC & EXE & COM
+
+    style OBS fill:#1e40af,color:#fff
+    style DET fill:#7c3aed,color:#fff
+    style DIAG fill:#0891b2,color:#fff
+    style PLAN fill:#d97706,color:#fff
+    style GATE fill:#dc2626,color:#fff
+    style EXEC fill:#ea580c,color:#fff
+    style EXPL fill:#059669,color:#fff
+    style AUTO fill:#16a34a,color:#fff
+    style HITL fill:#dc2626,color:#fff
+    style CMD fill:#7c3aed,color:#fff
 ```
 
-## Safety Gate Decision Matrix
+---
 
-```
-+-------------------+------------+--------+-------------+---------+
-| Anomaly           | Confidence | Blast  | Destructive | Route   |
-+-------------------+------------+--------+-------------+---------+
-| CrashLoopBackOff  | 0.9        | low    | false       | AUTO    |
-| OOMKilled         | 0.85       | low    | false       | AUTO    |
-| Evicted           | 0.9        | low    | false       | AUTO    |
-| Pending           | 0.7        | medium | false       | HITL    |
-| ImagePullBackOff  | 0.95       | medium | false       | HITL    |
-| CPUThrottling     | 0.8        | medium | false       | HITL    |
-| DeploymentStalled | 0.7        | high   | true        | HITL    |
-| NodeNotReady      | 0.5        | high   | true        | HITL    |
-+-------------------+------------+--------+-------------+---------+
+## Pipeline Flow — Step by Step
 
-Rule: AUTO only if (confidence > 0.8 AND blast_radius = "low" AND NOT destructive)
-```
+```mermaid
+sequenceDiagram
+    participant K8s as Kubernetes
+    participant OBS as 1. Observe
+    participant DET as 2. Detect (LLM)
+    participant DIAG as 3. Diagnose (LLM)
+    participant PLAN as 4. Plan (LLM)
+    participant GATE as 5. Safety Gate
+    participant EXEC as 6. Execute
+    participant EXPL as 7. Explain (LLM)
+    participant SLK as Slack
 
-## ClusterState Schema (TypedDict)
+    loop Every 45 seconds
+        OBS->>K8s: get pods, events, deployments
+        K8s-->>DET: raw cluster signals
 
-```
-ClusterState:
-  events:        list[dict]          # Raw kubectl events (append-only)
-  anomalies:     list[Anomaly]       # Detected anomalies (append-only)
-  diagnosis:     str                 # LLM root cause with evidence
-  plan:          RemediationPlan     # Action + confidence + blast_radius
-  approved:      bool                # HITL approval decision
-  result:        str                 # Execution output + post-action state
-  audit_log:     list[LogEntry]      # Persistent history (append-only)
-  current_anomaly_index: int         # Processing tracker
-  retry_count:   int                 # Self-correction attempts (max 3)
-  incident_id:   str                 # Unique incident identifier
-```
+        Note over DET: LLM #1: Classify anomalies
+        DET-->>DIAG: CrashLoopBackOff on pod/xyz
 
-## MCP Tool Architecture
+        DIAG->>K8s: kubectl logs --previous + describe
+        Note over DIAG: LLM #2: Root cause analysis
+        DIAG-->>PLAN: "Exit code 1, no startup command"
 
-```
-+-----------------------------------+
-| kubectl MCP Server (FastMCP)      |
-| RBAC: k8swhisperer-agent SA      |
-+-----------------------------------+
-| get_pods(namespace)               |
-| get_pod_logs(name, ns, previous)  |
-| describe_pod(name, ns)            |
-| get_events(namespace)             |
-| get_nodes()                       |
-| delete_pod(name, ns)              |
-| patch_deployment_resources(...)   |
-| rollback_deployment(name, ns)     |
-| get_deployments(namespace)        |
-| get_hpa(namespace)                |
-| scale_deployment(name, ns, n)     |
-+-----------------------------------+
+        Note over PLAN: LLM #3: Generate remediation
+        PLAN-->>GATE: delete_pod, conf=0.9, blast=low
 
-+-----------------------------------+
-| Slack MCP Server (FastMCP)        |
-+-----------------------------------+
-| send_slack_message(ch, text)      |
-| send_approval_request(ch, plan)   |
-+-----------------------------------+
+        alt Safe action
+            GATE->>EXEC: AUTO-EXECUTE
+            EXEC->>K8s: delete pod
+            EXEC->>EXEC: Verify (5s, 10s, 20s backoff)
+        else Risky action
+            GATE->>SLK: Approve/Reject buttons
+            SLK-->>EXEC: Human approved
+        end
+
+        Note over EXPL: LLM #4: Plain-English summary
+        EXPL->>SLK: Post notification
+    end
 ```
 
-## RBAC Security Model
+---
 
+## Safety Gate Decision
+
+```mermaid
+graph LR
+    IN[Plan] --> C1{Confidence > 0.8?}
+    C1 -->|No| HITL[HITL — Ask Human]
+    C1 -->|Yes| C2{Blast = low?}
+    C2 -->|No| HITL
+    C2 -->|Yes| C3{Non-destructive?}
+    C3 -->|No| HITL
+    C3 -->|Yes| AUTO[AUTO-EXECUTE]
+
+    style AUTO fill:#16a34a,color:#fff
+    style HITL fill:#dc2626,color:#fff
 ```
-ServiceAccount: k8swhisperer-agent (namespace: k8swhisperer-demo)
 
-Namespaced Role:
-  pods:         get, list, watch, delete, patch
-  pods/log:     get
-  events:       get, list, watch
-  deployments:  get, list, watch, patch, update
-  replicasets:  get, list, watch
+**All 3 must be true for auto-execution:**
+- Confidence > 80%
+- Blast radius = low (affects 1 pod only)
+- Action is NOT in destructive list (rollback, drain, cordon, force-delete)
 
-ClusterRole (read-only):
-  nodes:        get, list, watch
-  metrics:      get, list (metrics.k8s.io)
+---
 
-NO cluster-admin. NO namespace deletion. NO secret access.
+## Agent RBAC Isolation
+
+```mermaid
+graph LR
+    subgraph "Read Only"
+        S[Scout]
+        D[Doctor]
+    end
+    subgraph "Write"
+        E[Executor]
+    end
+    subgraph "Comms"
+        C[Comms]
+    end
+
+    S -->|get_pods, get_events, get_nodes| K8S[(K8s API)]
+    D -->|get_logs, describe_pod| K8S
+    E -->|delete, patch, rollback, scale| K8S
+    C -->|messages, approvals| SLACK[(Slack)]
+
+    S -.->|CANNOT write| K8S
+    E -.->|CANNOT read logs| K8S
+    C -.->|CANNOT touch cluster| K8S
+
+    style S fill:#0284c7,color:#fff
+    style D fill:#7c3aed,color:#fff
+    style E fill:#ea580c,color:#fff
+    style C fill:#0891b2,color:#fff
 ```
 
-## Tech Stack
+Each agent only has the tools it needs. Scout can look but can't touch. Executor can fix but can't read sensitive logs. This is **RBAC at the agent level**.
 
-| Component | Technology |
-|---|---|
-| Orchestration | LangGraph StateGraph + InMemorySaver |
-| LLM | Claude via LiteLLM (OpenAI-compatible proxy) |
-| MCP Server | FastMCP (Python MCP SDK) |
-| HITL | Slack Block Kit + FastAPI webhook |
-| API Server | FastAPI + uvicorn |
-| Frontend | React + TypeScript + Tailwind CSS |
-| Cluster | kind (Kubernetes in Docker) |
-| Blockchain | Stellar Soroban (testnet) |
-| Language | Python 3.11+ / TypeScript |
+---
+
+## Self-Correction Loop
+
+```mermaid
+graph LR
+    E[Execute] --> V{Pod healthy?}
+    V -->|Yes| X[Explain & Log]
+    V -->|"No (retry < 3)"| D[Re-diagnose]
+    V -->|"No (retries done)"| X
+    D --> P[Re-plan] --> E
+
+    style E fill:#ea580c,color:#fff
+    style D fill:#0891b2,color:#fff
+    style X fill:#059669,color:#fff
+```
+
+If a fix fails, the agent doesn't give up — it re-analyzes with the failure context and tries a different approach. Up to 3 retries.
+
+---
+
+## Where LLM is Called (4 times per incident)
+
+| Stage | LLM Call | Input | Output |
+|-------|----------|-------|--------|
+| **Detect** | LLM #1 | Raw cluster events (pods, statuses, K8s events) | Anomaly classification (type, severity, confidence) |
+| **Diagnose** | LLM #2 | kubectl logs, describe, events for specific pod | Root cause analysis citing evidence |
+| **Plan** | LLM #3 | Diagnosis text | Remediation plan (action, confidence, blast_radius) |
+| **Explain** | LLM #4 | Full incident context | Plain-English summary for humans |

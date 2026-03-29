@@ -96,7 +96,7 @@ def _execute_action(plan: dict) -> dict:
 
         mem = params.get("memory_limit", "")
         cpu = params.get("cpu_limit", "")
-        container_name = params.get("container_name", "")
+        container_name = params.get("container_name", "") or params.get("container", "")
 
         # If LLM returned a percentage like "+50%", calculate the actual value
         if not mem or "%" in str(mem):
