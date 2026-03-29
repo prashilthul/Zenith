@@ -90,16 +90,40 @@ def _execute_action(plan: dict) -> dict:
         if owning:
             logger.info(
                 "patch_deployment_resources: resolved pod %s to deployment %s",
-                target,
-                owning,
+                target, owning,
             )
             deploy_name = owning
+
+        mem = params.get("memory_limit", "")
+        cpu = params.get("cpu_limit", "")
+        container_name = params.get("container_name", "")
+
+        # If LLM returned a percentage like "+50%", calculate the actual value
+        if not mem or "%" in str(mem):
+            try:
+                apps = get_apps_v1()
+                dep = apps.read_namespaced_deployment(name=deploy_name, namespace=namespace)
+                container = dep.spec.template.spec.containers[0]
+                container_name = container_name or container.name
+                current_limit = container.resources.limits.get("memory", "64Mi") if container.resources and container.resources.limits else "64Mi"
+                # Parse like "50Mi" -> 50, multiply by 1.5
+                num = int("".join(c for c in current_limit if c.isdigit()) or "64")
+                unit = "".join(c for c in current_limit if not c.isdigit()) or "Mi"
+                mem = f"{int(num * 1.5)}{unit}"
+                logger.info("Resolved memory +50%%: %s -> %s", current_limit, mem)
+            except Exception as e:
+                logger.warning("Failed to read current memory limit: %s, using 128Mi", e)
+                mem = "128Mi"
+
+        if not cpu or "%" in str(cpu):
+            cpu = ""  # Don't patch CPU if not specified with actual value
+
         return patch_deployment_resources(
             name=deploy_name,
             namespace=namespace,
-            container_name=params.get("container_name", ""),
-            memory_limit=params.get("memory_limit", ""),
-            cpu_limit=params.get("cpu_limit", ""),
+            container_name=container_name,
+            memory_limit=mem,
+            cpu_limit=cpu,
         )
 
     if action == "rollback_deployment":

@@ -40,3 +40,4 @@ contracts/incident-audit/target/
 # Logs
 *.log
 audit_log.json
+.docker-kubeconfig

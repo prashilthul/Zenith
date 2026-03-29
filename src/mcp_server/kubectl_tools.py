@@ -267,6 +267,10 @@ def delete_pod(name: str, namespace: str = "k8swhisperer-demo") -> dict:
         )
         return {"status": "deleted", "pod": name, "namespace": namespace}
     except Exception as exc:
+        # 404 = pod already gone, treat as success
+        if hasattr(exc, 'status') and exc.status == 404:
+            logger.info("delete_pod: pod %s/%s already gone (404)", namespace, name)
+            return {"status": "deleted", "pod": name, "namespace": namespace, "note": "pod was already gone"}
         logger.exception("delete_pod failed for %s/%s", namespace, name)
         return _error("Failed to delete pod", exc)
 

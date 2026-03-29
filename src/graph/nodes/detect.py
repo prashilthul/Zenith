@@ -110,7 +110,8 @@ def detect_node(state: ClusterState) -> dict:
     existing = state.get("anomalies", [])
     if existing:
         logger.info("detect_node: skipping — %d anomalies already populated", len(existing))
-        return {"anomalies": existing, "current_anomaly_index": 0}
+        # Return empty — state already has them, operator.add would double them
+        return {"anomalies": [], "current_anomaly_index": 0}
 
     events = state.get("events", [])
     if not events:

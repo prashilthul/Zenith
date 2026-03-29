@@ -113,7 +113,7 @@ def explain_node(state: ClusterState) -> dict:
             if anomaly and result:
                 fp = compute_fingerprint(anomaly["type"], anomaly.get("raw_signal", ""), "Pod")
                 success = "success" in result.lower() or "deleted" in result.lower()
-                store_runbook(fp, state.get("diagnosis", ""), plan or {}, success, 0)
+                store_runbook(fp, state.get("diagnosis", ""), json.dumps(plan) if plan else "", success, 0)
         except Exception as e:
             logger.warning("Failed to store runbook: %s", e)
 
