@@ -22,10 +22,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from src.main import observation_loop
     from src.slack.listener import start_socket_mode
 
-    task = asyncio.create_task(observation_loop(interval_seconds=30))
-    logger.info("Observation loop background task started (30s interval)")
+    task = asyncio.create_task(observation_loop(interval_seconds=45))
+    logger.info("Observation loop background task started (45s interval)")
 
-    slack_task = asyncio.create_task(start_socket_mode())
+    async def _safe_socket_mode():
+        try:
+            await start_socket_mode()
+        except Exception:
+            logger.exception("Slack Socket Mode crashed")
+
+    slack_task = asyncio.create_task(_safe_socket_mode())
     logger.info("Slack Socket Mode background task started")
 
     yield
