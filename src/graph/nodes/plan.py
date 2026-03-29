@@ -1,0 +1,134 @@
+"""Plan node — generates a remediation plan for the diagnosed anomaly."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+
+from src.graph.state import ClusterState
+from src.llm.client import llm_call_json
+from src.llm.prompts import PLANNER_SYSTEM_PROMPT
+from src.models import RemediationPlan
+
+logger = logging.getLogger(__name__)
+
+# ── Hardcoded fallback plans per anomaly type ────────────────────────────
+
+_FALLBACK_PLANS: dict[str, dict] = {
+    "CrashLoopBackOff": {
+        "action": "delete_pod",
+        "params": {},
+        "confidence": 0.5,
+        "blast_radius": "low",
+        "is_destructive": False,
+        "reasoning": "Restart the pod to clear transient crash state.",
+    },
+    "OOMKilled": {
+        "action": "patch_deployment_resources",
+        "params": {"memory_limit": "512Mi"},
+        "confidence": 0.6,
+        "blast_radius": "low",
+        "is_destructive": False,
+        "reasoning": "Increase memory limit to prevent OOMKill.",
+    },
+    "ImagePullBackOff": {
+        "action": "no_op",
+        "params": {},
+        "confidence": 0.3,
+        "blast_radius": "low",
+        "is_destructive": False,
+        "reasoning": "Image pull issue requires manual image fix; no safe auto-remediation.",
+    },
+    "Pending": {
+        "action": "no_op",
+        "params": {},
+        "confidence": 0.3,
+        "blast_radius": "low",
+        "is_destructive": False,
+        "reasoning": "Scheduling failure likely needs node capacity or resource adjustment.",
+    },
+    "Evicted": {
+        "action": "delete_pod",
+        "params": {},
+        "confidence": 0.5,
+        "blast_radius": "low",
+        "is_destructive": False,
+        "reasoning": "Recreate evicted pod; node pressure may have cleared.",
+    },
+}
+
+
+def _build_fallback(anomaly: dict) -> RemediationPlan:
+    """Build a safe fallback plan when the LLM fails."""
+    atype = anomaly.get("type", "Unknown")
+    defaults = _FALLBACK_PLANS.get(atype, {
+        "action": "no_op",
+        "params": {},
+        "confidence": 0.2,
+        "blast_radius": "low",
+        "is_destructive": False,
+        "reasoning": f"Fallback: no automatic remediation for {atype}.",
+    })
+    return RemediationPlan(
+        action=defaults["action"],
+        target=anomaly.get("affected_resource", "unknown"),
+        namespace=anomaly.get("namespace", "k8swhisperer-demo"),
+        params=defaults["params"],
+        confidence=defaults["confidence"],
+        blast_radius=defaults["blast_radius"],
+        is_destructive=defaults["is_destructive"],
+        reasoning=defaults["reasoning"],
+    )
+
+
+def plan_node(state: ClusterState) -> dict:
+    """Generate a remediation plan for the current anomaly.
+
+    Returns ``{"plan": RemediationPlan}``.
+    """
+    anomalies = state.get("anomalies", [])
+    idx = state.get("current_anomaly_index", 0)
+    diagnosis = state.get("diagnosis", "")
+
+    if not anomalies or idx >= len(anomalies):
+        logger.warning("plan_node: no anomaly to plan for")
+        return {"plan": None}
+
+    anomaly = anomalies[idx]
+    logger.info("plan_node: planning for %s on %s", anomaly.get("type"), anomaly.get("affected_resource"))
+
+    user_message = (
+        f"Anomaly: {json.dumps(anomaly, default=str)}\n\n"
+        f"Diagnosis: {diagnosis}"
+    )
+
+    messages = [
+        {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
+
+    try:
+        raw_plan = asyncio.get_event_loop().run_until_complete(
+            llm_call_json(messages)
+        )
+    except RuntimeError:
+        raw_plan = asyncio.run(llm_call_json(messages))
+
+    if not isinstance(raw_plan, dict) or "action" not in raw_plan:
+        logger.warning("Planner LLM returned invalid plan; using fallback")
+        plan = _build_fallback(anomaly)
+    else:
+        plan = RemediationPlan(
+            action=raw_plan.get("action", "no_op"),
+            target=raw_plan.get("target", anomaly.get("affected_resource", "unknown")),
+            namespace=raw_plan.get("namespace", anomaly.get("namespace", "k8swhisperer-demo")),
+            params=raw_plan.get("params", {}),
+            confidence=float(raw_plan.get("confidence", 0.5)),
+            blast_radius=raw_plan.get("blast_radius", "medium"),
+            is_destructive=bool(raw_plan.get("is_destructive", False)),
+            reasoning=raw_plan.get("reasoning", ""),
+        )
+
+    logger.info("plan_node result: action=%s, confidence=%.2f", plan["action"], plan["confidence"])
+    return {"plan": plan}
