@@ -1,0 +1,55 @@
+"""Application configuration loaded from environment variables and .env file."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional
+
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Central configuration for K8sWhisperer.
+
+    All values can be overridden via environment variables or a .env file
+    located in the project root.
+    """
+
+    # ── LiteLLM / LLM ──────────────────────────────────────────────────
+    LITELLM_API_KEY: str = ""
+    LITELLM_MODEL_FAST: str = "anthropic/claude-sonnet-4-20250514"
+    LITELLM_MODEL_REASONING: str = "anthropic/claude-opus-4-20250514"
+    LITELLM_BASE_URL: Optional[str] = None
+
+    # ── Slack ───────────────────────────────────────────────────────────
+    SLACK_BOT_TOKEN: str = ""
+    SLACK_SIGNING_SECRET: str = ""
+    SLACK_CHANNEL_ID: str = ""
+    SLACK_APP_TOKEN: Optional[str] = None
+
+    # ── Kubernetes ──────────────────────────────────────────────────────
+    KUBECONFIG: str = str(Path.home() / ".kube" / "config")
+    NAMESPACE: str = "k8swhisperer-demo"
+
+    # ── Stellar / Blockchain (all optional) ─────────────────────────────
+    STELLAR_SECRET_KEY: Optional[str] = None
+    STELLAR_CONTRACT_ID: Optional[str] = None
+    STELLAR_NETWORK: str = "testnet"
+
+    # ── Prometheus ──────────────────────────────────────────────────────
+    PROMETHEUS_URL: Optional[str] = "http://localhost:9090"
+
+    # ── Feature flags ───────────────────────────────────────────────────
+    ENABLE_PREDICTIVE_ALERTING: bool = True
+    ENABLE_RUNBOOK_CACHE: bool = True
+    ENABLE_MULTI_AGENT: bool = True
+    ENABLE_BLOCKCHAIN: bool = True
+
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
+
+settings = Settings()
