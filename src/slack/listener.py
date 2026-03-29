@@ -13,11 +13,11 @@ from src.llm.client import llm_call_sync
 
 logger = logging.getLogger(__name__)
 
-# Quick action patterns
+# Quick action patterns — order matters, first match wins
 PATTERNS = {
-    r"(?i)(status|health|how.*(cluster|pod))": "cluster_status",
+    r"(?i)(status|health|how.*(cluster|pod)|what.*(broken|wrong|failing|down)|broken|failing|issue)": "cluster_status",
     r"(?i)(incident|history|audit|log)": "incident_query",
-    r"(?i)(chaos|break|inject)": "chaos_trigger",
+    r"(?i)(inject\s+chaos|trigger\s+chaos|chaos\s+inject|break\s+things)": "chaos_trigger",
     # NLP catch-all: action verbs that imply a kubectl command
     r"(?i)(fix|resolve|heal|remediate|restart|delete|kill|remove|increase|decrease|scale|rollback|undo|revert|describe|show\s+logs|get\s+logs|patch|bump|resize)": "nlp_command",
 }
@@ -266,13 +266,30 @@ async def _trigger_chaos() -> str:
 
 async def _general_chat(text: str) -> str:
     try:
+        # Get real cluster context
+        cluster_ctx = ""
+        try:
+            from src.mcp_server.kubectl_tools import get_pods
+            pods = get_pods()
+            if isinstance(pods, list):
+                lines = []
+                for p in pods:
+                    if isinstance(p, dict) and "name" in p:
+                        phase = p.get("phase", "?")
+                        restarts = sum(c.get("restart_count", 0) for c in p.get("container_statuses", []) if isinstance(c, dict))
+                        lines.append(f"  - {p['name']}: {phase} (restarts={restarts})")
+                cluster_ctx = "\n\nCurrent pods:\n" + "\n".join(lines) if lines else "\n\nNo pods running."
+        except Exception:
+            cluster_ctx = "\n\n(Could not fetch cluster state)"
+
         messages = [
             {
                 "role": "system",
                 "content": (
                     "You are K8sWhisperer, an AI Kubernetes incident response agent. "
-                    "Answer questions about cluster health, incidents, and remediation "
-                    "strategies. Be concise."
+                    "You have access to a live kind cluster. Answer questions about cluster health, "
+                    "incidents, and remediation strategies. Be concise and actionable."
+                    f"{cluster_ctx}"
                 ),
             },
             {"role": "user", "content": text},
