@@ -62,12 +62,12 @@ DESTRUCTIVE_ACTIONS: frozenset[str] = frozenset(
 )
 
 ANOMALY_TYPES: dict[str, str] = {
-    "CrashLoopBackOff": "Pod restart count > 3 within 10 minutes",
-    "OOMKilled": "Container terminated with OOMKilled reason",
-    "HighLatency": "P99 latency exceeds SLO threshold (>500ms)",
-    "NodeNotReady": "Node condition Ready=False for >60 seconds",
-    "PVCPending": "PersistentVolumeClaim stuck in Pending state >5 minutes",
-    "ImagePullBackOff": "Container image pull failures for >2 minutes",
-    "ResourceQuotaExhausted": "Namespace resource quota utilization >90%",
-    "CertificateExpiry": "TLS certificate expires within 7 days",
+    "CrashLoopBackOff": "restartCount > 3; Fetch logs -> diagnose -> auto restart pod",
+    "OOMKilled": "lastState.terminated.reason = OOMKilled; Read limits -> patch +50% memory -> restart",
+    "Pending": "pod.status.phase = Pending > 5 min; Describe -> check node capacity -> recommend",
+    "ImagePullBackOff": "state.waiting.reason = ImagePullBackOff; Extract image -> alert human",
+    "CPUThrottling": "Prometheus: cpu_throttled > 0.5; Patch CPU limit upward -> verify throttle drops",
+    "Evicted": "pod.status.reason = Evicted; Check node pressure -> delete evicted pod",
+    "DeploymentStalled": "updatedReplicas != replicas > 10 min; Check events -> HITL: rollback or force rollout",
+    "NodeNotReady": "conditions[Ready] = False; Log metrics -> HITL ONLY — never auto-drain",
 }
