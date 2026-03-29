@@ -169,6 +169,7 @@ def run_pipeline(
         "current_anomaly_index": 0,
         "retry_count": 0,
         "incident_id": incident_id,
+        "thread_id": thread_id,
     }
 
     if initial_state:

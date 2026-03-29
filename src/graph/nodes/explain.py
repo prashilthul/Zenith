@@ -119,17 +119,23 @@ def explain_node(state: ClusterState) -> dict:
 
     # ── Store on blockchain (if enabled) ────────────────────────────
     try:
-        asyncio.get_event_loop().run_until_complete(
-            store_incident_on_chain(
-                incident_id=incident_id,
-                anomaly_type=anomaly.get("type", "unknown"),
-                action_taken=plan.get("action", "N/A"),
-                timestamp=int(datetime.now(timezone.utc).timestamp()),
-                confidence_score=int(plan.get("confidence", 0) * 100),
-                was_auto_executed=(decision == "auto-executed"),
-                diagnosis_summary=diagnosis[:256] if diagnosis else "N/A",
+        import concurrent.futures
+
+        def _store_blockchain() -> None:
+            asyncio.run(
+                store_incident_on_chain(
+                    incident_id=incident_id,
+                    anomaly_type=anomaly.get("type", "unknown"),
+                    action_taken=plan.get("action", "N/A"),
+                    timestamp=int(datetime.now(timezone.utc).timestamp()),
+                    confidence_score=int(plan.get("confidence", 0) * 100),
+                    was_auto_executed=(decision == "auto-executed"),
+                    diagnosis_summary=diagnosis[:256] if diagnosis else "N/A",
+                )
             )
-        )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(_store_blockchain).result(timeout=30)
         logger.info("Blockchain record stored for incident %s", incident_id)
     except Exception:
         logger.exception("Failed to store incident on blockchain (non-fatal)")

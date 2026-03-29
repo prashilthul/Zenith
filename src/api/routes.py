@@ -251,6 +251,30 @@ async def inject_chaos(count: int = 3) -> dict[str, Any]:
     return {"injected": len(results), "scenarios": results}
 
 
+@router.post("/chaos/inject")
+async def inject_specific_chaos(scenario: str) -> dict[str, Any]:
+    """Inject a specific chaos scenario by name."""
+    from src.chaos.injector import inject_specific
+
+    return await inject_specific(scenario)
+
+
+@router.post("/chaos/cleanup")
+async def cleanup_chaos() -> dict[str, Any]:
+    """Delete all demo pods and deployments."""
+    from src.chaos.injector import cleanup_demos
+
+    return await cleanup_demos()
+
+
+@router.get("/chaos/scenarios")
+async def list_chaos_scenarios() -> list[dict[str, Any]]:
+    """List all available chaos scenarios."""
+    from src.chaos.injector import list_scenarios
+
+    return list_scenarios()
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     """WebSocket for real-time incident update broadcasts."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -71,6 +72,8 @@ def send_approval_request(
     The buttons carry the *incident_id* as their ``value`` so the Slack
     interaction handler can resume the correct LangGraph thread.
     """
+    button_value = json.dumps({"thread_id": thread_id, "incident_id": incident_id})
+
     blocks = [
         {
             "type": "header",
@@ -96,15 +99,15 @@ def send_approval_request(
                     "type": "button",
                     "text": {"type": "plain_text", "text": "✅ Approve", "emoji": True},
                     "style": "primary",
-                    "action_id": "approve_remediation",
-                    "value": incident_id,
+                    "action_id": "approve",
+                    "value": button_value,
                 },
                 {
                     "type": "button",
                     "text": {"type": "plain_text", "text": "❌ Reject", "emoji": True},
                     "style": "danger",
-                    "action_id": "reject_remediation",
-                    "value": incident_id,
+                    "action_id": "reject",
+                    "value": button_value,
                 },
             ],
         },
@@ -119,8 +122,8 @@ def send_approval_request(
             "text": fallback_text,
             "blocks": blocks,
         }
-        if thread_id:
-            kwargs["thread_ts"] = thread_id
+        # NOTE: thread_id here is the LangGraph thread ID (for graph resumption),
+        # not a Slack message timestamp.  Do not use it as thread_ts.
 
         resp = client.chat_postMessage(**kwargs)
         return {

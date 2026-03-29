@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Skull,
   Loader2,
@@ -12,40 +12,111 @@ import {
   FlaskConical,
   ShieldAlert,
   CheckCircle2,
+  XCircle,
+  Search,
+  Wrench,
+  Shield,
+  Play,
+  FileText,
+  Bot,
 } from "lucide-react";
-import { triggerChaos } from "../lib/api";
+import { fetchAuditLog, injectSpecificChaos, cleanupChaos, fetchChaosScenarios } from "../lib/api";
+import type { AuditEntry } from "../types";
 
-const CHAOS_SCENARIOS = [
-  { id: "pod-kill", label: "Pod Kill", icon: Skull, color: "text-red-400" },
-  { id: "cpu-stress", label: "CPU Stress", icon: Cpu, color: "text-orange-400" },
-  { id: "memory-leak", label: "Memory Leak", icon: HardDrive, color: "text-yellow-400" },
-  { id: "network-delay", label: "Network Delay", icon: Network, color: "text-blue-400" },
-  { id: "node-drain", label: "Node Drain", icon: Server, color: "text-purple-400" },
-  { id: "latency-spike", label: "Latency Spike", icon: Zap, color: "text-cyan-400" },
-];
+const SCENARIO_META: Record<string, { icon: typeof Skull; color: string }> = {
+  "CrashLoop Demo": { icon: Skull, color: "text-red-400" },
+  "CrashLoop Deploy Demo": { icon: Skull, color: "text-red-400" },
+  "OOMKill Demo": { icon: HardDrive, color: "text-yellow-400" },
+  "OOMKill Deploy Demo": { icon: HardDrive, color: "text-yellow-400" },
+  "ImagePull Failure": { icon: Network, color: "text-blue-400" },
+  "Pending Pod": { icon: Clock, color: "text-orange-400" },
+  "Stalled Deployment": { icon: Server, color: "text-purple-400" },
+  "Evicted Demo": { icon: Zap, color: "text-cyan-400" },
+  "Node Pressure Demo": { icon: Cpu, color: "text-amber-400" },
+};
 
-export default function ChaosButton() {
+export default function ChaosButton({ onChaosComplete: _unused }: { onChaosComplete?: () => void } = {}) {
   const [loading, setLoading] = useState(false);
   const [injected, setInjected] = useState<{ scenario: string; applied_at: string }[]>([]);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedScenarios, setSelectedScenarios] = useState<Set<string>>(
-    new Set(CHAOS_SCENARIOS.map((s) => s.id))
-  );
+  const [scenarios, setScenarios] = useState<{ name: string; available: boolean }[]>([]);
+  const [selectedScenarios, setSelectedScenarios] = useState<Set<string>>(new Set());
+  const [cleaning, setCleaning] = useState(false);
+  // Live pipeline tracking
+  const [tracking, setTracking] = useState(false);
+  const [pipelineEvents, setPipelineEvents] = useState<AuditEntry[]>([]);
+  const baselineCount = useRef(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const toggleScenario = (id: string) => {
+  // Fetch available scenarios on mount
+  useEffect(() => {
+    fetchChaosScenarios().then((s) => {
+      setScenarios(s);
+      setSelectedScenarios(new Set(s.filter(x => x.available).map(x => x.name)));
+    }).catch(() => {});
+  }, []);
+
+  const toggleScenario = (name: string) => {
     setSelectedScenarios((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
       return next;
     });
   };
+
+  const handleCleanup = async () => {
+    setCleaning(true);
+    try { await cleanupChaos(); } catch { /* silent */ }
+    finally { setCleaning(false); }
+  };
+
+  // Start polling audit log for new entries after chaos
+  const startTracking = async () => {
+    // Capture current count as baseline
+    try {
+      const current = await fetchAuditLog();
+      baselineCount.current = current.length;
+    } catch { baselineCount.current = 0; }
+    setPipelineEvents([]);
+    setTracking(true);
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const entries = await fetchAuditLog();
+        const newEntries = entries.slice(baselineCount.current);
+        if (newEntries.length > 0) {
+          setPipelineEvents(newEntries);
+        }
+      } catch { /* silent */ }
+    }, 2000); // Poll every 2s
+  };
+
+  const stopTracking = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setTracking(false);
+  };
+
+  // Auto-stop after 3 minutes
+  useEffect(() => {
+    if (tracking) {
+      const timeout = setTimeout(stopTracking, 180000);
+      return () => clearTimeout(timeout);
+    }
+  }, [tracking]);
+
+  // Cleanup on unmount
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   const handleChaos = async () => {
     setLoading(true);
     setError(null);
     setInjected([]);
+    setPipelineEvents([]);
 
     for (let i = 3; i > 0; i--) {
       setCountdown(i);
@@ -54,10 +125,25 @@ export default function ChaosButton() {
     setCountdown(null);
 
     try {
-      const result = await triggerChaos(3);
-      setInjected(
-        result.scenarios ?? [{ scenario: "Chaos injected", applied_at: new Date().toISOString() }]
-      );
+      // If specific scenarios selected, inject them individually
+      const selected = Array.from(selectedScenarios);
+      if (selected.length === 0) {
+        setError("Select at least one scenario");
+        setLoading(false);
+        return;
+      }
+
+      // Clean up old pods first
+      await cleanupChaos();
+
+      const results: { scenario: string; applied_at: string }[] = [];
+      for (const name of selected) {
+        const r = await injectSpecificChaos(name);
+        results.push({ scenario: r.scenario, applied_at: new Date().toISOString() });
+      }
+      setInjected(results);
+      // Start live tracking of pipeline activity
+      startTracking();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chaos trigger failed");
     } finally {
@@ -112,20 +198,33 @@ export default function ChaosButton() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1">
         {/* Left: Scenario Selector */}
         <div className="bg-slate-900/60 border border-slate-700/50 rounded-2xl p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <ShieldAlert size={16} className="text-slate-400" />
-            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
-              Scenario Types
-            </h2>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <ShieldAlert size={16} className="text-slate-400" />
+              <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+                Pick Scenarios
+              </h2>
+              <span className="text-[10px] font-mono text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">
+                {selectedScenarios.size} selected
+              </span>
+            </div>
+            <button
+              onClick={handleCleanup}
+              disabled={cleaning}
+              className="text-[10px] font-mono text-red-400/70 hover:text-red-400 border border-red-500/20 hover:border-red-500/40 px-2 py-1 rounded transition cursor-pointer"
+            >
+              {cleaning ? "Cleaning..." : "Clear All Pods"}
+            </button>
           </div>
-          <div className="grid grid-cols-1 gap-2">
-            {CHAOS_SCENARIOS.map((scenario) => {
-              const Icon = scenario.icon;
-              const isSelected = selectedScenarios.has(scenario.id);
+          <div className="grid grid-cols-1 gap-2 max-h-[320px] overflow-y-auto pr-1">
+            {scenarios.map((scenario) => {
+              const meta = SCENARIO_META[scenario.name] || { icon: Zap, color: "text-slate-400" };
+              const Icon = meta.icon;
+              const isSelected = selectedScenarios.has(scenario.name);
               return (
                 <button
-                  key={scenario.id}
-                  onClick={() => toggleScenario(scenario.id)}
+                  key={scenario.name}
+                  onClick={() => toggleScenario(scenario.name)}
                   className={`
                     flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left transition-all duration-200 cursor-pointer
                     border
@@ -141,9 +240,9 @@ export default function ChaosButton() {
                       isSelected ? "bg-slate-700/60" : "bg-slate-800/40"
                     }`}
                   >
-                    <Icon size={15} className={isSelected ? scenario.color : "text-slate-600"} />
+                    <Icon size={15} className={isSelected ? meta.color : "text-slate-600"} />
                   </div>
-                  <span className="text-sm font-medium">{scenario.label}</span>
+                  <span className="text-xs font-medium font-mono">{scenario.name}</span>
                   <div className="ml-auto">
                     <div
                       className={`w-4 h-4 rounded-full border-2 transition-all flex items-center justify-center ${
@@ -310,6 +409,158 @@ export default function ChaosButton() {
           )}
         </div>
       </div>
+
+      {/* ================================================================ */}
+      {/*  LIVE PIPELINE ACTIVITY — shows agent working in real-time       */}
+      {/* ================================================================ */}
+
+      {(tracking || pipelineEvents.length > 0) && (
+        <div className="relative overflow-hidden rounded-xl border border-slate-700/60 bg-slate-950/90 backdrop-blur-sm">
+          <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-cyan-500/80 via-emerald-500/80 to-amber-500/80" />
+
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                {tracking && (
+                  <div className="relative flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                  </div>
+                )}
+                <Bot size={14} className="text-cyan-400" />
+                <span className="text-xs font-mono font-bold uppercase tracking-widest text-slate-200">
+                  Agent Pipeline — Live
+                </span>
+                <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-mono text-slate-500">
+                  {pipelineEvents.length} steps
+                </span>
+              </div>
+              {tracking && (
+                <button onClick={stopTracking} className="text-[10px] font-mono text-slate-500 hover:text-slate-300 transition">
+                  Stop tracking
+                </button>
+              )}
+            </div>
+
+            {pipelineEvents.length === 0 && tracking && (
+              <div className="flex items-center gap-3 py-6 justify-center text-slate-500">
+                <Loader2 size={16} className="animate-spin text-cyan-400" />
+                <span className="text-xs font-mono">Waiting for agent to detect anomalies...</span>
+              </div>
+            )}
+
+            <div className="space-y-1 max-h-[400px] overflow-y-auto pr-1">
+              {pipelineEvents.map((entry, idx) => {
+                const stageIcons: Record<string, React.ReactNode> = {
+                  observe: <Search size={12} />,
+                  detect: <AlertTriangle size={12} />,
+                  diagnose: <Wrench size={12} />,
+                  plan: <FileText size={12} />,
+                  safety_gate: <Shield size={12} />,
+                  execute: <Play size={12} />,
+                  explain: <CheckCircle2 size={12} />,
+                };
+                const stageColors: Record<string, string> = {
+                  observe: "text-blue-400 bg-blue-500/15 border-blue-500/30",
+                  detect: "text-purple-400 bg-purple-500/15 border-purple-500/30",
+                  diagnose: "text-cyan-400 bg-cyan-500/15 border-cyan-500/30",
+                  plan: "text-amber-400 bg-amber-500/15 border-amber-500/30",
+                  execute: "text-orange-400 bg-orange-500/15 border-orange-500/30",
+                  explain: "text-emerald-400 bg-emerald-500/15 border-emerald-500/30",
+                  safety_gate: "text-red-400 bg-red-500/15 border-red-500/30",
+                };
+                const stageClass = stageColors[entry.stage] || "text-slate-400 bg-slate-500/15 border-slate-500/30";
+                const details = entry.details as Record<string, Record<string, string>> | undefined;
+                const anomalyType = details?.anomaly?.type || "";
+                const resource = details?.anomaly?.affected_resource || "";
+                const action = details?.plan?.action || "";
+                const confidence = details?.plan?.confidence || "";
+                const blastRadius = details?.plan?.blast_radius || "";
+                const isSuccess = entry.outcome?.includes("success");
+                const isFailure = entry.outcome?.includes("failure");
+                const decision = entry.decision || "";
+
+                return (
+                  <div
+                    key={`${entry.incident_id}-${idx}`}
+                    className="rounded-lg bg-slate-900/60 border border-slate-800/60 px-3 py-2 font-mono animate-[fadeIn_0.4s_ease]"
+                  >
+                    <div className="flex items-center gap-2 text-[11px]">
+                      {/* Time */}
+                      <span className="text-slate-600 w-14 shrink-0">
+                        {entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ""}
+                      </span>
+
+                      {/* Stage badge with icon */}
+                      <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-bold uppercase ${stageClass} shrink-0`}>
+                        {stageIcons[entry.stage] || null}
+                        {entry.stage}
+                      </span>
+
+                      {/* Incident ID */}
+                      <span className="text-slate-600 shrink-0">{entry.incident_id.slice(0, 12)}</span>
+
+                      {/* Anomaly type */}
+                      {anomalyType && (
+                        <span className="text-cyan-300 font-semibold shrink-0">{anomalyType}</span>
+                      )}
+
+                      {/* Outcome */}
+                      <span className="ml-auto shrink-0">
+                        {isSuccess && <span className="flex items-center gap-1 text-emerald-400"><CheckCircle2 size={11}/>resolved</span>}
+                        {isFailure && <span className="flex items-center gap-1 text-red-400"><XCircle size={11}/>failed</span>}
+                        {decision === "auto-executed" && !isSuccess && !isFailure && (
+                          <span className="text-amber-400">auto-executing...</span>
+                        )}
+                      </span>
+                    </div>
+
+                    {/* Detail row — resource, action, confidence */}
+                    {(resource || action) && (
+                      <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-500 pl-16">
+                        {resource && (
+                          <span>
+                            <span className="text-slate-600">resource:</span>{" "}
+                            <span className="text-slate-300">{resource.replace("pod/","").replace("deployment/","")}</span>
+                          </span>
+                        )}
+                        {action && (
+                          <span>
+                            <span className="text-slate-600">action:</span>{" "}
+                            <span className="text-amber-300">{action}</span>
+                          </span>
+                        )}
+                        {confidence && (
+                          <span>
+                            <span className="text-slate-600">conf:</span>{" "}
+                            <span className="text-cyan-300">{Number(confidence) > 1 ? confidence : (Number(confidence) * 100).toFixed(0) + "%"}</span>
+                          </span>
+                        )}
+                        {blastRadius && (
+                          <span>
+                            <span className="text-slate-600">blast:</span>{" "}
+                            <span className={blastRadius === "low" ? "text-emerald-400" : blastRadius === "high" ? "text-red-400" : "text-amber-400"}>
+                              {blastRadius}
+                            </span>
+                          </span>
+                        )}
+                        {decision && (
+                          <span>
+                            <span className="text-slate-600">decision:</span>{" "}
+                            <span className={decision === "auto-executed" ? "text-emerald-400" : decision === "rejected" ? "text-red-400" : "text-amber-400"}>
+                              {decision}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Inline keyframes for fadeIn animation */}
       <style>{`

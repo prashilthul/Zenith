@@ -21,3 +21,4 @@ class ClusterState(TypedDict):
     current_anomaly_index: int
     retry_count: int
     incident_id: str
+    thread_id: str

@@ -39,3 +39,19 @@ export async function triggerChaos(count: number = 3): Promise<ChaosResult> {
 export async function fetchClusterState(): Promise<ClusterState> {
   return request<ClusterState>("/api/cluster-state");
 }
+
+export async function injectSpecificChaos(scenario: string): Promise<{ scenario: string; success: boolean; output?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/chaos/inject?scenario=${encodeURIComponent(scenario)}`, { method: "POST" });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function cleanupChaos(): Promise<{ cleaned: boolean; output: string }> {
+  const res = await fetch(`${API_BASE}/api/chaos/cleanup`, { method: "POST" });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchChaosScenarios(): Promise<{ name: string; available: boolean }[]> {
+  return request<{ name: string; available: boolean }[]>("/api/chaos/scenarios");
+}

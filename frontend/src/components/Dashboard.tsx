@@ -10,8 +10,8 @@ import {
   Zap,
   Signal,
 } from "lucide-react";
-import { fetchIncidents, fetchClusterState } from "../lib/api";
-import type { Incident, ClusterState, PodStatus } from "../types";
+import { fetchIncidents, fetchClusterState, fetchAuditLog } from "../lib/api";
+import type { Incident, ClusterState, PodStatus, AuditEntry } from "../types";
 import IncidentCard from "./IncidentCard";
 import ChaosButton from "./ChaosButton";
 import MTTRChart from "./MTTRChart";
@@ -24,37 +24,42 @@ type PodPhase = "Running" | "Pending" | "Failed" | "Succeeded" | "Unknown";
 
 const PHASE_META: Record<
   PodPhase,
-  { color: string; ring: string; glow: string; label: string }
+  { color: string; ring: string; glow: string; label: string; text: string }
 > = {
   Running: {
     color: "bg-emerald-500",
     ring: "ring-emerald-500/30",
     glow: "shadow-emerald-500/40",
     label: "Running",
+    text: "text-emerald-400",
   },
   Pending: {
     color: "bg-yellow-500",
     ring: "ring-yellow-500/30",
     glow: "shadow-yellow-500/40",
     label: "Pending",
+    text: "text-yellow-400",
   },
   Failed: {
     color: "bg-red-500",
     ring: "ring-red-500/30",
     glow: "shadow-red-500/40",
     label: "Failed",
+    text: "text-red-400",
   },
   Succeeded: {
     color: "bg-blue-500",
     ring: "ring-blue-500/30",
     glow: "shadow-blue-500/40",
     label: "Succeeded",
+    text: "text-blue-400",
   },
   Unknown: {
     color: "bg-slate-500",
     ring: "ring-slate-500/30",
     glow: "shadow-slate-500/40",
     label: "Unknown",
+    text: "text-slate-400",
   },
 };
 
@@ -154,55 +159,23 @@ function StatCard({
 /* ------------------------------------------------------------------ */
 
 function PodDot({ pod }: { pod: PodStatus }) {
-  const [hovered, setHovered] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const phase = podPhase(pod);
   const meta = PHASE_META[phase];
   const restarts = podRestarts(pod);
   const reason = pod.containers?.find((c) => c.reason)?.reason || pod.phase;
   const isCrashing = phase === "Failed";
+  // Shorten name: remove hash suffixes for readability
+  const shortName = pod.name.replace(/-[a-z0-9]{8,10}-[a-z0-9]{4,5}$/, "");
 
   return (
-    <div
-      ref={ref}
-      className="relative"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <div
-        className={`h-3.5 w-3.5 rounded-full ${meta.color} ring-2 ${meta.ring}
-          transition-all duration-200 cursor-pointer
-          hover:scale-150 hover:shadow-md ${meta.glow}
-          ${isCrashing ? "animate-pulse" : ""}
-        `}
-      />
-
-      {/* Tooltip */}
-      {hovered && (
-        <div
-          className="absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-nowrap
-            rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs shadow-xl shadow-black/40"
-        >
-          <div className="font-mono font-semibold text-white">
-            {pod.namespace}/{pod.name}
-          </div>
-          <div className="mt-1 flex items-center gap-2 text-slate-400">
-            <span
-              className={`inline-block h-2 w-2 rounded-full ${meta.color}`}
-            />
-            {reason}
-            {restarts > 0 && (
-              <span className="text-yellow-400">
-                {restarts} restart{restarts > 1 ? "s" : ""}
-              </span>
-            )}
-          </div>
-          {pod.node && (
-            <div className="mt-0.5 text-slate-500">node: {pod.node}</div>
-          )}
-          {/* Arrow */}
-          <div className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-slate-600" />
-        </div>
+    <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/40 transition-all hover:border-slate-600 ${isCrashing ? "animate-pulse" : ""}`}>
+      <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${meta.color} ${meta.glow}`} />
+      <span className="text-[11px] font-mono text-slate-300 truncate max-w-[140px]" title={pod.name}>
+        {shortName}
+      </span>
+      <span className={`text-[10px] font-mono ${meta.text} ml-auto shrink-0`}>{reason}</span>
+      {restarts > 0 && (
+        <span className="text-[10px] font-mono text-yellow-400 shrink-0">{restarts}x</span>
       )}
     </div>
   );
@@ -275,21 +248,28 @@ function SectionHeader({
 export default function Dashboard() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [cluster, setCluster] = useState<ClusterState | null>(null);
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const mountedRef = useRef(true);
+  const prevAuditCount = useRef(0);
 
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
     try {
-      const [inc, cs] = await Promise.allSettled([
+      const [inc, cs, al] = await Promise.allSettled([
         fetchIncidents(),
         fetchClusterState(),
+        fetchAuditLog(),
       ]);
       if (!mountedRef.current) return;
       if (inc.status === "fulfilled") setIncidents(inc.value);
       if (cs.status === "fulfilled") setCluster(cs.value);
+      if (al.status === "fulfilled") {
+        prevAuditCount.current = auditEntries.length;
+        setAuditEntries(al.value);
+      }
       setLastUpdate(new Date());
     } catch {
       // silent
@@ -404,6 +384,81 @@ export default function Dashboard() {
       )}
 
       {/* ================================================================ */}
+      {/*  LIVE PIPELINE ACTIVITY FEED                                      */}
+      {/* ================================================================ */}
+
+      {auditEntries.length > 0 && (
+        <div className="relative overflow-hidden rounded-xl border border-slate-700/60 bg-slate-900/80 backdrop-blur-sm">
+          <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-amber-500/80 via-red-500/80 to-purple-500/80" />
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+                </div>
+                <span className="text-xs font-mono font-bold uppercase tracking-widest text-slate-300">
+                  Live Pipeline Activity
+                </span>
+                <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-mono text-slate-500">
+                  {auditEntries.length} events
+                </span>
+              </div>
+            </div>
+            <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
+              {[...auditEntries].reverse().slice(0, 15).map((entry, idx) => {
+                const stageColors: Record<string, string> = {
+                  observe: "text-blue-400 bg-blue-500/15 border-blue-500/30",
+                  detect: "text-purple-400 bg-purple-500/15 border-purple-500/30",
+                  diagnose: "text-cyan-400 bg-cyan-500/15 border-cyan-500/30",
+                  plan: "text-amber-400 bg-amber-500/15 border-amber-500/30",
+                  execute: "text-orange-400 bg-orange-500/15 border-orange-500/30",
+                  explain: "text-emerald-400 bg-emerald-500/15 border-emerald-500/30",
+                  safety_gate: "text-red-400 bg-red-500/15 border-red-500/30",
+                };
+                const stageClass = stageColors[entry.stage] || "text-slate-400 bg-slate-500/15 border-slate-500/30";
+                const isNew = idx < (auditEntries.length - prevAuditCount.current) && prevAuditCount.current > 0;
+                const anomalyType = (entry.details as Record<string, Record<string, string>>)?.anomaly?.type || "";
+                const action = (entry.details as Record<string, Record<string, string>>)?.plan?.action || "";
+                const isSuccess = entry.outcome?.includes("success");
+                const isFailure = entry.outcome?.includes("failure");
+
+                return (
+                  <div
+                    key={`${entry.incident_id}-${idx}`}
+                    className={`flex items-center gap-2 rounded-lg px-3 py-1.5 font-mono text-[11px]
+                      ${isNew ? "bg-amber-500/5 border border-amber-500/20 animate-[fadeIn_0.5s_ease]" : "bg-slate-800/40"}
+                      transition-all duration-300`}
+                  >
+                    <span className="text-slate-600 w-16 shrink-0">
+                      {entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : ""}
+                    </span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] border font-bold uppercase ${stageClass} w-16 text-center shrink-0`}>
+                      {entry.stage}
+                    </span>
+                    <span className="text-slate-500 w-24 shrink-0 truncate">{entry.incident_id}</span>
+                    {anomalyType && (
+                      <span className="text-cyan-300/80 shrink-0">{anomalyType}</span>
+                    )}
+                    {action && (
+                      <span className="text-slate-500">→ <span className="text-amber-300/80">{action}</span></span>
+                    )}
+                    <span className="ml-auto shrink-0">
+                      {isSuccess && <span className="text-emerald-400">resolved</span>}
+                      {isFailure && <span className="text-red-400">failed</span>}
+                      {entry.decision && !isSuccess && !isFailure && (
+                        <span className="text-slate-500">{entry.decision}</span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
       {/*  MIDDLE: Cluster Health  |  Incident Analytics                    */}
       {/* ================================================================ */}
 
@@ -440,7 +495,7 @@ export default function Dashboard() {
             ) : cluster?.pods && cluster.pods.length > 0 ? (
               <>
                 <PodLegend pods={cluster.pods} />
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-4 grid grid-cols-1 gap-1.5">
                   {cluster.pods.map((pod) => (
                     <PodDot
                       key={`${pod.namespace}/${pod.name}`}
@@ -457,10 +512,8 @@ export default function Dashboard() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {cluster.nodes.map((n) => {
-                        const ready = n.conditions?.find(
-                          (c) => c.type === "Ready"
-                        );
-                        const isReady = ready?.status === "True";
+                        const isReady = (n as unknown as Record<string, unknown>).ready === "True" ||
+                          n.conditions?.find((c) => c.type === "Ready")?.status === "True";
                         return (
                           <span
                             key={n.name}

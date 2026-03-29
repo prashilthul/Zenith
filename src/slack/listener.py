@@ -1,5 +1,6 @@
 """Slack Socket Mode listener for conversational agent control."""
 import asyncio
+import json
 import logging
 import re
 from slack_sdk.web.async_client import AsyncWebClient
@@ -50,6 +51,41 @@ async def handle_message(client: SocketModeClient, req: SocketModeRequest):
                 thread_ts=thread_ts,
                 text=response_text,
             )
+
+    elif req.type == "interactive":
+        # Handle block_actions (Approve / Reject button clicks)
+        response = SocketModeResponse(envelope_id=req.envelope_id)
+        await client.send_socket_mode_response(response)
+
+        payload = req.payload
+        actions = payload.get("actions", [])
+        if actions:
+            action = actions[0]
+            action_id = action.get("action_id", "")
+            try:
+                value = json.loads(action.get("value", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                value = {}
+
+            thread_id = value.get("thread_id", "")
+            username = payload.get("user", {}).get("username", "unknown")
+            response_url = payload.get("response_url", "")
+            approved = action_id == "approve"
+
+            if thread_id and action_id in ("approve", "reject"):
+                logger.info(
+                    "Socket Mode interactive action: action=%s user=%s thread=%s",
+                    action_id, username, thread_id,
+                )
+                # Resume graph in a background thread (graph.invoke is synchronous)
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    _resume_graph_sync,
+                    thread_id,
+                    approved,
+                    username,
+                    response_url,
+                )
 
     elif req.type == "slash_commands":
         response = SocketModeResponse(envelope_id=req.envelope_id)
@@ -191,6 +227,52 @@ async def _handle_slash_command(command: str, text: str) -> str:
             )
         return await _handle_intent(_classify_intent(text), text)
     return "Unknown command"
+
+
+def _resume_graph_sync(
+    thread_id: str,
+    approved: bool,
+    username: str,
+    response_url: str,
+) -> None:
+    """Resume the LangGraph pipeline after an Approve/Reject button click.
+
+    Runs in a thread-pool executor because graph.invoke() is synchronous.
+    """
+    from langgraph.types import Command
+    from src.graph.builder import graph
+
+    import httpx
+
+    decision_text = "approved" if approved else "rejected"
+
+    try:
+        config = {"configurable": {"thread_id": thread_id}}
+        graph.invoke(
+            Command(resume={"approved": approved, "user": username}),
+            config=config,
+        )
+        logger.info(
+            "Graph resumed for thread %s — %s by %s",
+            thread_id, decision_text, username,
+        )
+    except Exception:
+        logger.exception("Failed to resume graph for thread %s", thread_id)
+
+    # Update Slack message via response_url
+    if response_url:
+        try:
+            httpx.post(
+                response_url,
+                json={
+                    "replace_original": True,
+                    "text": f":memo: Remediation *{decision_text}* by *{username}*.",
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
+        except Exception:
+            logger.warning("Failed to update Slack message via response_url", exc_info=True)
 
 
 async def start_socket_mode():

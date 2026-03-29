@@ -25,6 +25,7 @@ def hitl_node(state: ClusterState) -> dict:
     """
     plan = state.get("plan")
     incident_id = state.get("incident_id", "unknown")
+    thread_id = state.get("thread_id", "")
 
     if plan is None:
         logger.warning("hitl_node: no plan in state")
@@ -48,7 +49,7 @@ def hitl_node(state: ClusterState) -> dict:
                 channel=channel,
                 incident_id=incident_id,
                 plan_summary=plan_summary,
-                thread_id="",  # top-level message
+                thread_id=thread_id,
             )
             logger.info("Slack approval request sent: %s", slack_result)
         except Exception:

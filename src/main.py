@@ -72,7 +72,7 @@ async def observation_loop(interval_seconds: int = 30) -> None:
             _clear_stale_dedup_entries()
 
             logger.info("observation_loop: starting pipeline (thread=%s)", thread_id)
-            result = run_pipeline(thread_id=thread_id)
+            result = await asyncio.to_thread(run_pipeline, thread_id=thread_id)
 
             anomalies = result.get("anomalies", []) if isinstance(result, dict) else []
             if anomalies:
@@ -95,7 +95,8 @@ async def observation_loop(interval_seconds: int = 30) -> None:
                             idx + 1, len(anomalies), a.get("type"), a.get("affected_resource"),
                         )
                         # Run pipeline with pre-populated state (skips observe/detect effectively)
-                        run_pipeline(
+                        await asyncio.to_thread(
+                            run_pipeline,
                             incident_id=extra_incident,
                             thread_id=extra_thread,
                             initial_state={
@@ -109,6 +110,14 @@ async def observation_loop(interval_seconds: int = 30) -> None:
                             "observation_loop: failed processing anomaly %d (thread=%s)",
                             idx + 1, extra_thread,
                         )
+                    finally:
+                        # Re-mark in dedup cache so it won't be double-processed next cycle
+                        try:
+                            from src.graph.nodes.detect import _seen
+                            key = (a.get("type", ""), a.get("affected_resource", ""))
+                            _seen[key] = time.time()
+                        except Exception:
+                            pass
             else:
                 logger.info("observation_loop: No anomalies detected (thread=%s)", thread_id)
         except Exception:

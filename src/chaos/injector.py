@@ -103,3 +103,34 @@ async def inject_chaos(
             await asyncio.sleep(stagger_seconds)
 
     return results
+
+
+async def inject_specific(scenario_name: str) -> dict[str, Any]:
+    """Inject a specific chaos scenario by name."""
+    for s in CHAOS_SCENARIOS:
+        if s.name == scenario_name:
+            return await _apply_manifest(s)
+    return {"scenario": scenario_name, "success": False, "error": "Scenario not found"}
+
+
+async def cleanup_demos() -> dict[str, Any]:
+    """Delete all demo pods and deployments from the namespace."""
+    cmds = [
+        ["kubectl", "delete", "pod", "--all", "-n", "k8swhisperer-demo", "--ignore-not-found"],
+        ["kubectl", "delete", "deployment", "--all", "-n", "k8swhisperer-demo", "--ignore-not-found"],
+    ]
+    output_lines = []
+    for cmd in cmds:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        out = stdout.decode().strip()
+        if out:
+            output_lines.append(out)
+    return {"cleaned": True, "output": "\n".join(output_lines)}
+
+
+def list_scenarios() -> list[dict[str, str]]:
+    """Return all available chaos scenarios."""
+    return [{"name": s.name, "available": s.yaml_path.exists()} for s in CHAOS_SCENARIOS]

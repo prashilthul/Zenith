@@ -32,7 +32,7 @@ def observe_node(state: ClusterState) -> dict:
     # Skip observation if events are already pre-populated (multi-anomaly processing)
     if state.get("events"):
         logger.info("observe_node: skipping — events already populated (%d)", len(state["events"]))
-        return {"events": []}
+        return {"events": state["events"]}
 
     namespace = settings.NAMESPACE
     if namespace in _SKIP_NAMESPACES:

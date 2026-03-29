@@ -222,7 +222,7 @@ export default function App() {
               {activeTab === "dashboard" && <Dashboard />}
               {activeTab === "audit" && <AuditLog />}
               {activeTab === "warroom" && <WarRoom />}
-              {activeTab === "chaos" && <ChaosLabView />}
+              {activeTab === "chaos" && <ChaosLabView onSwitchToDashboard={() => setActiveTab("dashboard")} />}
               {activeTab === "blockchain" && <BlockchainView />}
             </div>
           </div>
@@ -296,7 +296,7 @@ function StatusPill({
   );
 }
 
-function ChaosLabView() {
+function ChaosLabView({ onSwitchToDashboard }: { onSwitchToDashboard: () => void }) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3 mb-2">
@@ -319,7 +319,7 @@ function ChaosLabView() {
           <p className="text-xs font-mono text-slate-500 leading-relaxed">
             Trigger controlled chaos experiments against the target cluster. The agent will autonomously detect and remediate failures.
           </p>
-          <ChaosButton />
+          <ChaosButton onChaosComplete={onSwitchToDashboard} />
         </div>
 
         {/* MTTR Chart */}
