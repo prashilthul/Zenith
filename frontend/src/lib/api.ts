@@ -35,5 +35,5 @@ export async function triggerChaos(count: number = 3): Promise<ChaosResult> {
 }
 
 export async function fetchClusterState(): Promise<ClusterState> {
-  return request<ClusterState>("/api/cluster");
+  return request<ClusterState>("/api/cluster-state");
 }
