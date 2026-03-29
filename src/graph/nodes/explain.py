@@ -122,27 +122,31 @@ def explain_node(state: ClusterState) -> dict:
             logger.warning("Failed to store runbook: %s", e)
 
     # ── Store on blockchain (if enabled) ────────────────────────────
-    try:
-        import concurrent.futures
+    if settings.ENABLE_BLOCKCHAIN and settings.STELLAR_CONTRACT_ID and len(settings.STELLAR_CONTRACT_ID) > 10:
+        import threading
 
         def _store_blockchain() -> None:
-            asyncio.run(
-                store_incident_on_chain(
-                    incident_id=incident_id,
-                    anomaly_type=anomaly.get("type", "unknown"),
-                    action_taken=plan.get("action", "N/A"),
-                    timestamp=int(datetime.now(timezone.utc).timestamp()),
-                    confidence_score=int(plan.get("confidence", 0) * 100),
-                    was_auto_executed=(decision == "auto-executed"),
-                    diagnosis_summary=diagnosis[:256] if diagnosis else "N/A",
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(
+                    store_incident_on_chain(
+                        incident_id=incident_id,
+                        anomaly_type=anomaly.get("type", "unknown"),
+                        action_taken=plan.get("action", "N/A"),
+                        timestamp=int(datetime.now(timezone.utc).timestamp()),
+                        confidence_score=int(plan.get("confidence", 0) * 100),
+                        was_auto_executed=(decision == "auto-executed"),
+                        diagnosis_summary=diagnosis[:256] if diagnosis else "N/A",
+                    )
                 )
-            )
+                loop.close()
+                logger.info("Blockchain record stored for incident %s", incident_id)
+            except Exception:
+                logger.exception("Blockchain storage failed (non-fatal)")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            pool.submit(_store_blockchain).result(timeout=30)
-        logger.info("Blockchain record stored for incident %s", incident_id)
-    except Exception:
-        logger.exception("Failed to store incident on blockchain (non-fatal)")
+        t = threading.Thread(target=_store_blockchain, daemon=True)
+        t.start()
+        logger.info("Blockchain storage thread started for %s", incident_id)
 
     # ── Post to Slack ────────────────────────────────────────────────
     channel = settings.SLACK_CHANNEL_ID
