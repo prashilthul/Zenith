@@ -16,10 +16,11 @@ class Settings(BaseSettings):
     """
 
     # ── LiteLLM / LLM ──────────────────────────────────────────────────
-    LITELLM_API_KEY: str = ""
-    LITELLM_MODEL_FAST: str = "anthropic/claude-sonnet-4-20250514"
-    LITELLM_MODEL_REASONING: str = "anthropic/claude-opus-4-20250514"
-    LITELLM_BASE_URL: Optional[str] = None
+    LLM_API_KEY: str = ""
+    LLM_BASE_URL: str = "https://llmproxy.atlan.dev/"
+    LLM_PROVIDER: str = "litellm"
+    LITELLM_MODEL_FAST: str = "claude-sonnet-4-5"
+    LITELLM_MODEL_REASONING: str = "claude-sonnet-4-5"  # Use sonnet to save tokens
 
     # ── Slack ───────────────────────────────────────────────────────────
     SLACK_BOT_TOKEN: str = ""

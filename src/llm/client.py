@@ -78,10 +78,10 @@ async def llm_call(
         "messages": messages,
         "temperature": temperature,
     }
-    if settings.LITELLM_API_KEY:
-        kwargs["api_key"] = settings.LITELLM_API_KEY
-    if settings.LITELLM_BASE_URL:
-        kwargs["api_base"] = settings.LITELLM_BASE_URL
+    if settings.LLM_API_KEY:
+        kwargs["api_key"] = settings.LLM_API_KEY
+    if settings.LLM_BASE_URL:
+        kwargs["api_base"] = settings.LLM_BASE_URL
     if response_format is not None:
         kwargs["response_format"] = response_format
 
