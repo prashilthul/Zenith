@@ -344,11 +344,56 @@ function ChaosLabView({ onSwitchToDashboard }: { onSwitchToDashboard: () => void
 }
 
 function BlockchainView() {
-  const blocks = [
-    { hash: "0x7a3f...e2d1", type: "Pod Restart", time: "2m ago", status: "confirmed" },
-    { hash: "0x1b9c...f4a8", type: "Scale Event", time: "8m ago", status: "confirmed" },
-    { hash: "0x4e2d...a1c3", type: "Config Patch", time: "15m ago", status: "pending" },
-  ];
+  const [status, setStatus] = useState<{
+    enabled: boolean; network: string; contract_id: string;
+    incident_count: number; connection: string;
+  } | null>(null);
+  const [incidents, setIncidents] = useState<{
+    incident_id: string; anomaly_type: string; action: string;
+    timestamp: string; confidence: number; auto_executed: boolean;
+    decision: string; explorer_url?: string;
+  }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [stellarLoading, setStellarLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const API = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      // Only show full loading on first fetch
+      if (!status) setStellarLoading(true);
+      try {
+        const [statusRes, incidentsRes] = await Promise.allSettled([
+          fetch(`${API}/api/blockchain/status`).then(r => r.json()),
+          fetch(`${API}/api/blockchain/incidents`).then(r => r.json()),
+        ]);
+        if (!cancelled) {
+          if (statusRes.status === "fulfilled") setStatus(statusRes.value);
+          if (incidentsRes.status === "fulfilled") setIncidents(Array.isArray(incidentsRes.value) ? incidentsRes.value : []);
+          setError(null);
+        }
+      } catch (e: any) {
+        // Keep stale data visible, just show error banner
+        if (!cancelled) setError(e.message || "Failed to fetch blockchain data");
+      } finally {
+        if (!cancelled) { setLoading(false); setStellarLoading(false); }
+      }
+    }
+    load();
+    const interval = setInterval(load, 15000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const timeAgo = (ts: string) => {
+    try {
+      const diff = Date.now() - new Date(ts).getTime();
+      if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
+      if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+      return `${Math.floor(diff / 3600000)}h ago`;
+    } catch { return ts; }
+  };
 
   return (
     <div className="space-y-6">
@@ -360,68 +405,130 @@ function BlockchainView() {
           <h2 className="text-base font-mono font-bold text-slate-100">Stellar Testnet Integration</h2>
           <p className="text-xs font-mono text-slate-500">Tamper-proof audit trail on-chain</p>
         </div>
-        <span className="ml-auto text-[10px] font-mono bg-purple-500/15 text-purple-400 border border-purple-500/30 rounded-full px-3 py-1 uppercase tracking-wider">
-          Testnet
+        <span className={`ml-auto text-[10px] font-mono rounded-full px-3 py-1 uppercase tracking-wider flex items-center gap-1.5 ${
+          stellarLoading
+            ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+            : status?.connection === "active"
+              ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+              : "bg-slate-500/15 text-slate-400 border border-slate-500/30"
+        }`}>
+          {stellarLoading && (
+            <span className="h-3 w-3 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
+          )}
+          {stellarLoading ? "Connecting..." : status?.connection === "active" ? "Connected" : loading ? "Loading..." : "Testnet"}
         </span>
       </div>
 
-      {/* Stats row */}
+      {error && (
+        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-3 text-xs font-mono text-rose-400">
+          {error}
+        </div>
+      )}
+
+      {/* Stats row — live data */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: "Blocks Written", value: "47", icon: <Database size={14} /> },
-          { label: "Transactions", value: "128", icon: <Activity size={14} /> },
-          { label: "Hash Algorithm", value: "SHA-256", icon: <Lock size={14} /> },
-          { label: "Network", value: "Stellar", icon: <Globe size={14} /> },
+          { label: "On-Chain Records", value: loading ? "..." : String(status?.incident_count ?? 0), icon: <Database size={14} /> },
+          { label: "Incidents Tracked", value: loading ? "..." : String(incidents.length), icon: <Activity size={14} /> },
+          { label: "Contract", value: status?.contract_id ? `${status.contract_id.slice(0, 6)}...${status.contract_id.slice(-4)}` : "...", icon: <Lock size={14} /> },
+          { label: "Network", value: status?.network ?? "Stellar", icon: <Globe size={14} /> },
         ].map((stat) => (
-          <div
-            key={stat.label}
-            className="bg-slate-800/40 rounded-xl border border-slate-700/40 p-4 text-center"
-          >
+          <div key={stat.label} className="bg-slate-800/40 rounded-xl border border-slate-700/40 p-4 text-center">
             <div className="flex justify-center mb-2 text-purple-400">{stat.icon}</div>
             <div className="text-xl font-bold font-mono text-purple-300">{stat.value}</div>
-            <div className="text-[10px] text-slate-500 font-mono mt-1 uppercase tracking-wider">
-              {stat.label}
-            </div>
+            <div className="text-[10px] text-slate-500 font-mono mt-1 uppercase tracking-wider">{stat.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Recent blocks */}
+      {/* Contract info */}
+      {status?.contract_id && (
+        <div className="bg-slate-800/40 rounded-xl border border-slate-700/40 p-4">
+          <h3 className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-2">
+            <Shield size={13} className="text-purple-400" />
+            Smart Contract
+          </h3>
+          <div className="flex items-center gap-2">
+            <code className="text-[11px] font-mono text-purple-300 bg-slate-900/50 rounded px-2 py-1 flex-1 overflow-x-auto">
+              {status.contract_id}
+            </code>
+            <a
+              href={`https://stellar.expert/explorer/testnet/contract/${status.contract_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] font-mono text-purple-400 hover:text-purple-300 border border-purple-500/30 rounded px-2 py-1 hover:bg-purple-500/10 transition-colors"
+            >
+              Explorer
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* On-chain incident records */}
       <div className="bg-slate-800/40 rounded-xl border border-slate-700/40 p-6">
         <h3 className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-4 flex items-center gap-2">
           <Link size={13} className="text-purple-400" />
-          Recent On-Chain Records
+          On-Chain Incident Records
         </h3>
-        <div className="space-y-2">
-          {blocks.map((block, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-4 bg-slate-900/50 rounded-lg p-3 border border-slate-700/30 hover:border-purple-500/30 transition-colors"
-            >
-              <div className="w-8 h-8 rounded-md bg-purple-500/15 flex items-center justify-center shrink-0">
-                <Hexagon size={14} className="text-purple-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-slate-300">{block.type}</span>
-                  <span className="text-[10px] font-mono text-slate-600">{block.hash}</span>
-                </div>
-                <span className="text-[10px] font-mono text-slate-600">{block.time}</span>
-              </div>
-              <span
-                className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                  block.status === "confirmed"
-                    ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
-                    : "bg-amber-500/15 text-amber-400 border border-amber-500/30"
-                }`}
+        {loading ? (
+          <div className="space-y-2">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-14 bg-slate-900/50 rounded-lg animate-pulse" />
+            ))}
+          </div>
+        ) : incidents.length === 0 ? (
+          <p className="text-xs font-mono text-slate-600 text-center py-8">
+            No incidents recorded on-chain yet. Incidents are stored after remediation.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {incidents.map((inc, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-4 bg-slate-900/50 rounded-lg p-3 border border-slate-700/30 hover:border-purple-500/30 transition-colors"
               >
-                {block.status}
-              </span>
-            </div>
-          ))}
-        </div>
+                <div className="w-8 h-8 rounded-md bg-purple-500/15 flex items-center justify-center shrink-0">
+                  <Hexagon size={14} className="text-purple-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-mono text-slate-300">{inc.anomaly_type}</span>
+                    <span className="text-[10px] font-mono text-slate-600">{inc.incident_id.slice(0, 12)}...</span>
+                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                      inc.auto_executed
+                        ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/30"
+                        : "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                    }`}>
+                      {inc.auto_executed ? "Auto" : "HITL"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[10px] font-mono text-slate-600">
+                      {inc.action} | conf: {(inc.confidence * 100).toFixed(0)}%
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-600">{timeAgo(inc.timestamp)}</span>
+                  </div>
+                </div>
+                {inc.explorer_url ? (
+                  <a
+                    href={inc.explorer_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] font-mono text-purple-400 hover:text-purple-300 border border-purple-500/30 rounded px-2 py-1 hover:bg-purple-500/10 transition-colors shrink-0"
+                  >
+                    View Tx
+                  </a>
+                ) : (
+                  <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    Recorded
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         <p className="text-[10px] font-mono text-slate-600 mt-4 text-center">
-          Every incident remediation is hashed and stored on Stellar testnet for tamper-proof compliance.
+          Every incident remediation is hashed and stored on Stellar testnet via Soroban smart contract.
         </p>
       </div>
     </div>

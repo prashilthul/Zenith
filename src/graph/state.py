@@ -8,6 +8,13 @@ from typing import Annotated, Optional, TypedDict
 from src.models import Anomaly, LogEntry, RemediationPlan
 
 
+def _merge_dicts(a: dict, b: dict) -> dict:
+    """Merge two dicts, with b taking precedence."""
+    merged = {**a}
+    merged.update(b)
+    return merged
+
+
 class ClusterState(TypedDict):
     """Shared state that flows through the K8sWhisperer LangGraph."""
 
@@ -22,3 +29,4 @@ class ClusterState(TypedDict):
     retry_count: int
     incident_id: str
     thread_id: str
+    stage_timings: Annotated[dict, _merge_dicts]

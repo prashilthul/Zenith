@@ -372,7 +372,16 @@ def rollback_deployment(name: str, namespace: str = "k8swhisperer-demo") -> dict
 
         sorted_rs = sorted(rs_list.items, key=_revision, reverse=True)
         if len(sorted_rs) < 2:
-            return _error("No previous revision found to rollback to")
+            return {
+                "status": "no_op",
+                "deployment": name,
+                "namespace": namespace,
+                "message": (
+                    "No previous revision found to rollback to — this deployment "
+                    "has only one revision. Manual intervention required (e.g. fix "
+                    "the image tag or configuration and re-deploy)."
+                ),
+            }
 
         previous_rs = sorted_rs[1]
         prev_template = previous_rs.spec.template

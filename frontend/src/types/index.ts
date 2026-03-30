@@ -74,3 +74,22 @@ export interface Trace {
   duration_ms: number;
   timestamp: string;
 }
+
+export interface BlockchainStatus {
+  enabled: boolean;
+  network: string;
+  contract_id: string;
+  incident_count: number;
+  connection: string;
+}
+
+export interface BlockchainIncident {
+  incident_id: string;
+  anomaly_type: string;
+  action: string;
+  timestamp: string;
+  confidence: number;
+  auto_executed: boolean;
+  decision: string;
+  explorer_url?: string;
+}

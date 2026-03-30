@@ -233,7 +233,7 @@ async def _get_recent_incidents() -> str:
         import json
         from pathlib import Path
 
-        audit_path = Path("data/audit_log.json")
+        from src.utils.audit import AUDIT_LOG_PATH as audit_path
         if not audit_path.exists():
             return "No incidents recorded yet."
         entries = json.loads(audit_path.read_text())

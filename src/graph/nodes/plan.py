@@ -10,8 +10,14 @@ from src.graph.state import ClusterState
 from src.llm.client import llm_call_json_sync, set_current_trace_id
 from src.llm.prompts import PLANNER_SYSTEM_PROMPT
 from src.models import RemediationPlan
+from src.utils.audit import make_entry, write_audit_entry
 
 logger = logging.getLogger(__name__)
+
+ALLOWED_ACTIONS = frozenset({
+    "delete_pod", "patch_deployment_resources", "rollback_deployment",
+    "scale_deployment", "no_op", "cordon_node",
+})
 
 # ── Hardcoded fallback plans per anomaly type ────────────────────────────
 
@@ -44,9 +50,9 @@ _FALLBACK_PLANS: dict[str, dict] = {
         "action": "no_op",
         "params": {},
         "confidence": 0.3,
-        "blast_radius": "low",
+        "blast_radius": "medium",
         "is_destructive": False,
-        "reasoning": "Scheduling failure likely needs node capacity or resource adjustment.",
+        "reasoning": "Scheduling failure likely needs node capacity or resource adjustment. Routes to HITL for human review.",
     },
     "Evicted": {
         "action": "delete_pod",
@@ -143,16 +149,69 @@ def plan_node(state: ClusterState) -> dict:
         logger.warning("Planner LLM returned invalid plan; using fallback")
         plan = _build_fallback(anomaly)
     else:
-        plan = RemediationPlan(
-            action=raw_plan.get("action", "no_op"),
-            target=raw_plan.get("target", anomaly.get("affected_resource", "unknown")),
-            namespace=raw_plan.get("namespace", anomaly.get("namespace", "k8swhisperer-demo")),
-            params=raw_plan.get("params", {}),
-            confidence=float(raw_plan.get("confidence", 0.5)),
-            blast_radius=raw_plan.get("blast_radius", "medium"),
-            is_destructive=bool(raw_plan.get("is_destructive", False)),
-            reasoning=raw_plan.get("reasoning", ""),
-        )
+        # Validate action
+        action = raw_plan.get("action", "no_op")
+        if action not in ALLOWED_ACTIONS:
+            logger.warning("LLM proposed disallowed action: %s, falling back", action)
+            plan = _build_fallback(anomaly)
+        else:
+            # Clamp confidence to [0.0, 1.0]
+            confidence = float(raw_plan.get("confidence", 0.5))
+            confidence = max(0.0, min(1.0, confidence))
+
+            # Validate blast_radius
+            blast_radius = raw_plan.get("blast_radius", "high")
+            if blast_radius not in ("low", "medium", "high"):
+                blast_radius = "high"
+
+            # Enforce minimum blast_radius per anomaly type (PS requirements)
+            # LLM cannot downgrade these — they MUST route to HITL
+            _MIN_BLAST = {
+                "Pending": "medium",
+                "ImagePullBackOff": "medium",
+                "CPUThrottling": "medium",
+                "DeploymentStalled": "high",
+                "NodeNotReady": "high",
+            }
+            _BLAST_ORDER = {"low": 0, "medium": 1, "high": 2}
+            min_blast = _MIN_BLAST.get(anomaly.get("type", ""), "low")
+            if _BLAST_ORDER.get(blast_radius, 0) < _BLAST_ORDER.get(min_blast, 0):
+                logger.info(
+                    "Enforcing minimum blast_radius %s for %s (LLM proposed %s)",
+                    min_blast, anomaly.get("type"), blast_radius,
+                )
+                blast_radius = min_blast
+
+            # Prevent cross-namespace attacks: use anomaly's namespace
+            anomaly_ns = anomaly.get("namespace", "k8swhisperer-demo")
+            proposed_ns = raw_plan.get("namespace", anomaly_ns)
+            if proposed_ns != anomaly_ns:
+                logger.warning(
+                    "LLM proposed namespace %s but anomaly is in %s; using anomaly namespace",
+                    proposed_ns, anomaly_ns,
+                )
+                proposed_ns = anomaly_ns
+
+            plan = RemediationPlan(
+                action=action,
+                target=raw_plan.get("target", anomaly.get("affected_resource", "unknown")),
+                namespace=proposed_ns,
+                params=raw_plan.get("params", {}),
+                confidence=confidence,
+                blast_radius=blast_radius,
+                is_destructive=bool(raw_plan.get("is_destructive", False)),
+                reasoning=raw_plan.get("reasoning", ""),
+            )
 
     logger.info("plan_node result: action=%s, confidence=%.2f", plan["action"], plan["confidence"])
+
+    # Write audit entry for the plan stage
+    if incident_id:
+        write_audit_entry(make_entry(
+            incident_id=incident_id,
+            stage="plan",
+            summary=f"Plan: {plan['action']} on {plan['target']} (confidence={plan['confidence']:.2f}, blast_radius={plan['blast_radius']})",
+            details={"plan": dict(plan), "anomaly": anomaly},
+        ))
+
     return {"plan": plan}

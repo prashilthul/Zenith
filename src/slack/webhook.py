@@ -142,12 +142,14 @@ async def slack_actions(
     response_url = data.get("response_url", "")
 
     approved = action_id == "approve"
+    incident_id = value.get("incident_id", "")
 
     logger.info(
-        "Slack action received: action=%s user=%s thread=%s",
+        "Slack action received: action=%s user=%s thread=%s incident=%s",
         action_id,
         username,
         thread_id,
+        incident_id,
     )
 
     # Offload graph resumption to background

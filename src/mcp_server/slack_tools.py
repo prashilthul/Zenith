@@ -74,12 +74,20 @@ def send_approval_request(
     """
     button_value = json.dumps({"thread_id": thread_id, "incident_id": incident_id})
 
+    # Parse plan_summary lines into structured fields
+    fields = []
+    for line in plan_summary.strip().split("\n"):
+        line = line.strip()
+        if ":" in line:
+            key, val = line.split(":", 1)
+            fields.append({"type": "mrkdwn", "text": f"*{key.strip()}:*\n{val.strip()}"})
+
     blocks = [
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f"🚨 Approval Required — Incident {incident_id}",
+                "text": ":rotating_light: Approval Required",
                 "emoji": True,
             },
         },
@@ -87,9 +95,20 @@ def send_approval_request(
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*Proposed remediation:*\n{plan_summary}",
+                "text": f":label: *Incident:* `{incident_id}`",
             },
         },
+    ]
+
+    # Add fields in pairs (Slack allows max 10 fields per section)
+    if fields:
+        for i in range(0, len(fields), 2):
+            blocks.append({
+                "type": "section",
+                "fields": fields[i:i+2],
+            })
+
+    blocks.extend([
         {"type": "divider"},
         {
             "type": "actions",
@@ -97,21 +116,21 @@ def send_approval_request(
             "elements": [
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "✅ Approve", "emoji": True},
+                    "text": {"type": "plain_text", "text": ":white_check_mark: Approve", "emoji": True},
                     "style": "primary",
                     "action_id": "approve",
                     "value": button_value,
                 },
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "❌ Reject", "emoji": True},
+                    "text": {"type": "plain_text", "text": ":x: Reject", "emoji": True},
                     "style": "danger",
                     "action_id": "reject",
                     "value": button_value,
                 },
             ],
         },
-    ]
+    ])
 
     fallback_text = f"Approval required for incident {incident_id}: {plan_summary}"
 

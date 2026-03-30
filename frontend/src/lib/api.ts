@@ -1,4 +1,4 @@
-import type { Incident, ClusterState, ChaosResult, AuditEntry, Trace } from "../types";
+import type { Incident, ClusterState, ChaosResult, AuditEntry, Trace, BlockchainStatus, BlockchainIncident } from "../types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
@@ -66,4 +66,12 @@ export async function fetchIncidentTraces(incidentId: string): Promise<Trace[]> 
 
 export async function fetchPodLogs(namespace: string, name: string, tail = 100, previous = false): Promise<any> {
   return request<any>(`/api/pods/${namespace}/${name}/logs?tail=${tail}&previous=${previous}`);
+}
+
+export async function fetchBlockchainStatus(): Promise<BlockchainStatus> {
+  return request<BlockchainStatus>("/api/blockchain/status");
+}
+
+export async function fetchBlockchainIncidents(): Promise<BlockchainIncident[]> {
+  return request<BlockchainIncident[]>("/api/blockchain/incidents");
 }

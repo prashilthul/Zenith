@@ -45,11 +45,14 @@ async def _apply_manifest(scenario: ChaosScenario) -> dict[str, Any]:
         logger.error(msg)
         return {"scenario": scenario.name, "success": False, "error": msg}
 
+    from src.config import settings
+
+    cmd = ["kubectl", "apply", "-f", str(scenario.yaml_path)]
+    if settings.KUBECONFIG:
+        cmd.extend(["--kubeconfig", settings.KUBECONFIG])
+
     proc = await asyncio.create_subprocess_exec(
-        "kubectl",
-        "apply",
-        "-f",
-        str(scenario.yaml_path),
+        *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -113,9 +116,12 @@ async def inject_specific(scenario_name: str) -> dict[str, Any]:
 
 async def cleanup_demos() -> dict[str, Any]:
     """Delete all demo pods and deployments from the namespace."""
+    from src.config import settings
+
+    kc = ["--kubeconfig", settings.KUBECONFIG] if settings.KUBECONFIG else []
     cmds = [
-        ["kubectl", "delete", "pod", "--all", "-n", "k8swhisperer-demo", "--ignore-not-found"],
-        ["kubectl", "delete", "deployment", "--all", "-n", "k8swhisperer-demo", "--ignore-not-found"],
+        ["kubectl", "delete", "pod", "--all", "-n", "k8swhisperer-demo", "--ignore-not-found"] + kc,
+        ["kubectl", "delete", "deployment", "--all", "-n", "k8swhisperer-demo", "--ignore-not-found"] + kc,
     ]
     output_lines = []
     for cmd in cmds:

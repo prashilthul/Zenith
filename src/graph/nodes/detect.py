@@ -12,6 +12,7 @@ from src.graph.state import ClusterState
 from src.llm.client import llm_call_json_sync, set_current_trace_id
 from src.llm.prompts import CLASSIFIER_SYSTEM_PROMPT
 from src.models import Anomaly
+from src.utils.audit import make_entry, write_audit_entry
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,39 @@ def _validate_anomaly(anomaly: dict, events: list[dict]) -> bool:
     resource = anomaly.get("affected_resource", "")
 
     if atype == "CrashLoopBackOff":
-        # Verify restartCount > 3 from the raw event data
+        # Check if this restart is part of a rolling update (false positive)
+        anomaly_ns = anomaly.get("namespace", "")
+        for ev in events:
+            if (
+                ev.get("kind") == "DeploymentRollout"
+                and ev.get("namespace") == anomaly_ns
+                and (ev.get("updated_replicas", 0) < ev.get("desired_replicas", 0))
+                and ev.get("name")
+                and ev["name"] in resource
+            ):
+                logger.info(
+                    "Skipping CrashLoopBackOff for %s: likely part of rolling "
+                    "update for deployment %s (updated=%d < desired=%d)",
+                    resource,
+                    ev["name"],
+                    ev.get("updated_replicas", 0),
+                    ev.get("desired_replicas", 0),
+                )
+                return False
+
+        # Verify restartCount > 3 AND not actually an OOMKill
         for ev in events:
             if ev.get("kind") == "Pod" and ev.get("name") == resource:
+                # Check if any container was OOMKilled — that's a different anomaly
+                for cs in ev.get("container_statuses", []):
+                    if cs.get("reason") == "OOMKilled":
+                        logger.info(
+                            "Reclassifying CrashLoopBackOff -> OOMKilled for %s (container terminated with OOMKilled)",
+                            resource,
+                        )
+                        anomaly["type"] = "OOMKilled"
+                        return True
+
                 total_restarts = sum(
                     cs.get("restart_count", 0)
                     for cs in ev.get("container_statuses", [])
@@ -151,6 +182,15 @@ def detect_node(state: ClusterState) -> dict:
             logger.info("Skipping duplicate anomaly: %s on %s", atype, resource)
             continue
 
+        # Skip anomalies pending HITL approval (prevents duplicate Slack messages)
+        try:
+            from src.graph.nodes.hitl import is_pending_approval
+            if is_pending_approval(atype, resource):
+                logger.info("Skipping anomaly pending HITL: %s on %s", atype, resource)
+                continue
+        except ImportError:
+            pass
+
         if not _validate_anomaly(raw, events):
             continue
 
@@ -165,13 +205,22 @@ def detect_node(state: ClusterState) -> dict:
         }
         anomalies.append(anomaly)
 
-    # Only mark the first anomaly as "seen" (pipeline processes index 0).
-    # Other anomalies will be re-detected and processed in subsequent cycles.
-    if len(anomalies) > 1:
-        for extra in anomalies[1:]:
-            key = (extra["type"], extra["affected_resource"])
-            _seen.pop(key, None)
-            logger.info("Un-marking dedup for queued anomaly: %s on %s", extra["type"], extra["affected_resource"])
+    # All detected anomalies stay in _seen to prevent duplicates.
+    # The pipeline processes index 0; remaining anomalies will be
+    # naturally re-detected once the dedup window (10 min) expires,
+    # which gives the first anomaly time to be remediated.
 
     logger.info("detect_node found %d anomalies", len(anomalies))
+
+    # Write audit entry for the detect stage
+    incident_id = state.get("incident_id", "")
+    if incident_id and anomalies:
+        write_audit_entry(make_entry(
+            incident_id=incident_id,
+            stage="detect",
+            summary=f"Detected {len(anomalies)} anomalie(s): "
+                    + ", ".join(f"{a['type']} on {a['affected_resource']}" for a in anomalies),
+            details={"anomalies_detected": len(anomalies)},
+        ))
+
     return {"anomalies": anomalies, "current_anomaly_index": 0}

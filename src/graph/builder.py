@@ -8,8 +8,9 @@ Exports:
 from __future__ import annotations
 
 import logging
+import time
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -26,6 +27,22 @@ from src.graph.state import ClusterState
 
 logger = logging.getLogger(__name__)
 
+
+def _timed(stage_name: str, fn: Callable) -> Callable:
+    """Wrap a node function to record execution time in stage_timings."""
+    def wrapper(state: ClusterState) -> dict:
+        start = time.time()
+        result = fn(state)
+        elapsed_ms = round((time.time() - start) * 1000)
+        timings = {stage_name: elapsed_ms}
+        if "stage_timings" not in result:
+            result["stage_timings"] = timings
+        else:
+            result["stage_timings"].update(timings)
+        logger.info("Stage %s completed in %dms", stage_name, elapsed_ms)
+        return result
+    return wrapper
+
 _MAX_RETRIES = 3
 
 # ── Conditional edge helpers ─────────────────────────────────────────────
@@ -39,6 +56,8 @@ def _has_anomalies(state: ClusterState) -> str:
     return END
 
 
+_retry_tracker: dict[str, int] = {}  # incident_id -> actual retry count
+
 def _verify_check(state: ClusterState) -> str:
     """Route after execute: check result and decide next step.
 
@@ -47,19 +66,25 @@ def _verify_check(state: ClusterState) -> str:
     - failure + retries exhausted -> explain (report failure)
     """
     result = state.get("result", "")
-    retry_count = state.get("retry_count", 0)
+    incident_id = state.get("incident_id", "")
 
     if result.startswith("success"):
+        _retry_tracker.pop(incident_id, None)
         return "explain"
 
-    if retry_count < _MAX_RETRIES:
+    # Track retries independently of state (belt + suspenders)
+    actual_retries = _retry_tracker.get(incident_id, 0) + 1
+    _retry_tracker[incident_id] = actual_retries
+
+    if actual_retries < _MAX_RETRIES:
         logger.info(
             "verify_check: failure (retry %d/%d), routing back to diagnose",
-            retry_count, _MAX_RETRIES,
+            actual_retries, _MAX_RETRIES,
         )
         return "diagnose"
 
-    logger.warning("verify_check: retries exhausted (%d), routing to explain", retry_count)
+    logger.warning("verify_check: retries exhausted (%d), routing to explain", actual_retries)
+    _retry_tracker.pop(incident_id, None)
     return "explain"
 
 
@@ -77,14 +102,14 @@ def _build_graph() -> StateGraph:
     """Construct the raw StateGraph (not yet compiled)."""
     builder = StateGraph(ClusterState)
 
-    # Add all nodes
-    builder.add_node("observe", observe_node)
-    builder.add_node("detect", detect_node)
-    builder.add_node("diagnose", diagnose_node)
-    builder.add_node("plan", plan_node)
-    builder.add_node("execute", execute_node)
-    builder.add_node("hitl_node", hitl_node)
-    builder.add_node("explain", explain_node)
+    # Add all nodes (wrapped with timing)
+    builder.add_node("observe", _timed("observe", observe_node))
+    builder.add_node("detect", _timed("detect", detect_node))
+    builder.add_node("diagnose", _timed("diagnose", diagnose_node))
+    builder.add_node("plan", _timed("plan", plan_node))
+    builder.add_node("execute", _timed("execute", execute_node))
+    builder.add_node("hitl_node", _timed("hitl", hitl_node))
+    builder.add_node("explain", _timed("explain", explain_node))
 
     # ── Edges ────────────────────────────────────────────────────────
     builder.add_edge(START, "observe")
@@ -170,6 +195,7 @@ def run_pipeline(
         "retry_count": 0,
         "incident_id": incident_id,
         "thread_id": thread_id,
+        "stage_timings": {},
     }
 
     if initial_state:

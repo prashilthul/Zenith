@@ -19,6 +19,7 @@ from src.mcp_server.kubectl_tools import (
     get_pod_logs,
 )
 from src.graph.nodes.execute import _find_owning_deployment
+from src.utils.audit import make_entry, write_audit_entry
 from src.utils.log_chunker import chunk_logs
 
 logger = logging.getLogger(__name__)
@@ -159,4 +160,14 @@ def diagnose_node(state: ClusterState) -> dict:
         )
 
     logger.info("diagnose_node result: %s", diagnosis[:200])
+
+    # Write audit entry for the diagnose stage
+    if incident_id:
+        write_audit_entry(make_entry(
+            incident_id=incident_id,
+            stage="diagnose",
+            summary=f"Diagnosis for {anomaly.get('type')} on {anomaly.get('affected_resource')}: {diagnosis[:200]}",
+            details={"anomaly": anomaly},
+        ))
+
     return {"diagnosis": diagnosis}

@@ -77,15 +77,24 @@ function outcomeStyle(outcome: string) {
     return {
       bg: "bg-emerald-500/10 text-emerald-400 ring-emerald-500/25",
       Icon: CheckCircle2,
+      label: "Resolved",
+    };
+  if (outcome?.startsWith("rejected"))
+    return {
+      bg: "bg-slate-500/10 text-slate-400 ring-slate-500/25",
+      Icon: Shield,
+      label: "Rejected",
     };
   if (outcome?.startsWith("failure"))
     return {
       bg: "bg-red-500/10 text-red-400 ring-red-500/25",
       Icon: XCircle,
+      label: "Failed",
     };
   return {
     bg: "bg-yellow-500/10 text-yellow-400 ring-yellow-500/25",
     Icon: Clock,
+    label: "Pending",
   };
 }
 
@@ -106,7 +115,7 @@ function blastStyle(radius?: string) {
 
 /* ── stage definitions (ordered) ──────────────────────────── */
 
-const ALL_STAGES = ["detect", "analyze", "plan", "act", "verify"];
+const ALL_STAGES = ["detect", "diagnose", "plan", "execute", "explain"];
 
 /* ── helpers ──────────────────────────────────────────────── */
 
@@ -228,15 +237,11 @@ export default function IncidentCard({ incident }: { incident: Incident }) {
           className={`ml-auto inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${oc.bg}`}
         >
           <OutcomeIcon className="h-3 w-3" />
-          {i.outcome?.startsWith("success")
-            ? "Resolved"
-            : i.outcome?.startsWith("failure")
-              ? "Failed"
-              : "Pending"}
+          {oc.label}
         </span>
       </div>
 
-      {/* ── stage dots ── */}
+      {/* ── stage progress with timing ── */}
       <div className="mt-3 flex items-center gap-1">
         {ALL_STAGES.map((stage, idx) => {
           const done = completedStages.has(stage);
@@ -271,6 +276,23 @@ export default function IncidentCard({ incident }: { incident: Incident }) {
           {completedStages.size}/{ALL_STAGES.length}
         </span>
       </div>
+
+      {/* ── confidence breakdown ── */}
+      {confPct != null && i.anomaly_type && (
+        <div className="mt-2 text-[10px] font-mono text-slate-600 flex items-center gap-2 flex-wrap">
+          <span className="text-slate-500">Confidence factors:</span>
+          {i.anomaly_type === "CrashLoopBackOff" && <span className="text-cyan-500/70">restartCount &gt; 3</span>}
+          {i.anomaly_type === "OOMKilled" && <span className="text-cyan-500/70">terminated.reason=OOMKilled</span>}
+          {i.anomaly_type === "Pending" && <span className="text-cyan-500/70">pending &gt; 5min</span>}
+          {i.anomaly_type === "ImagePullBackOff" && <span className="text-cyan-500/70">image pull failure</span>}
+          {i.anomaly_type === "CPUThrottling" && <span className="text-cyan-500/70">CPU &gt; target*0.8</span>}
+          {i.anomaly_type === "DeploymentStalled" && <span className="text-cyan-500/70">updatedReplicas &lt; desired</span>}
+          {i.anomaly_type === "Evicted" && <span className="text-cyan-500/70">pod.status.reason=Evicted</span>}
+          {i.anomaly_type === "NodeNotReady" && <span className="text-cyan-500/70">Ready=False</span>}
+          {i.blast_radius && <span className="text-amber-500/70">blast:{i.blast_radius}</span>}
+          {i.action && i.action !== "no_op" && <span className="text-emerald-500/70">action:{i.action}</span>}
+        </div>
+      )}
 
       {/* ── subtle animated pulse for active incidents ── */}
       {!i.outcome?.startsWith("success") && !i.outcome?.startsWith("failure") && (

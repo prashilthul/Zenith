@@ -343,6 +343,35 @@ export default function AuditLog() {
 
           {/* right side actions */}
           <div className="flex items-center gap-1">
+            {/* Export JSON */}
+            <button
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(entries, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a"); a.href = url; a.download = `k8swhisperer-audit-${new Date().toISOString().slice(0,10)}.json`;
+                a.click(); URL.revokeObjectURL(url);
+              }}
+              className="p-1.5 rounded-md text-slate-400 hover:text-emerald-400 hover:bg-slate-700/50 transition-colors"
+              title="Export JSON"
+            >
+              <ArrowDownToLine className="w-3.5 h-3.5" />
+            </button>
+            {/* Export CSV */}
+            <button
+              onClick={() => {
+                const headers = ["timestamp","incident_id","stage","decision","outcome","summary"];
+                const rows = entries.map(e => headers.map(h => `"${String((e as any)[h] || '').replace(/"/g, '""')}"`).join(","));
+                const csv = [headers.join(","), ...rows].join("\n");
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a"); a.href = url; a.download = `k8swhisperer-audit-${new Date().toISOString().slice(0,10)}.csv`;
+                a.click(); URL.revokeObjectURL(url);
+              }}
+              className="px-2 py-1 rounded-md text-[10px] font-mono text-slate-400 hover:text-emerald-400 hover:bg-slate-700/50 transition-colors border border-slate-700/50"
+              title="Export CSV"
+            >
+              CSV
+            </button>
             {/* search toggle */}
             <button
               onClick={() => {

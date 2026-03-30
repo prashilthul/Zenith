@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic_settings import BaseSettings
 
@@ -40,17 +40,26 @@ class Settings(BaseSettings):
     # ── Prometheus ──────────────────────────────────────────────────────
     PROMETHEUS_URL: Optional[str] = "http://localhost:9090"
 
+    # ── Execution ──────────────────────────────────────────────────────
+    DRY_RUN: bool = False
+
     # ── Feature flags ───────────────────────────────────────────────────
     ENABLE_PREDICTIVE_ALERTING: bool = True
     ENABLE_RUNBOOK_CACHE: bool = True
     ENABLE_MULTI_AGENT: bool = True
     ENABLE_BLOCKCHAIN: bool = True
+    ENABLE_MULTI_NAMESPACE: bool = False
 
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }
+
+    def model_post_init(self, __context: Any) -> None:
+        # Expand ~ in KUBECONFIG path
+        if self.KUBECONFIG and "~" in self.KUBECONFIG:
+            object.__setattr__(self, "KUBECONFIG", str(Path(self.KUBECONFIG).expanduser()))
 
 
 settings = Settings()

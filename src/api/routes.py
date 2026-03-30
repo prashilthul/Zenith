@@ -12,6 +12,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from src.config import settings
+from src.utils.audit import AUDIT_LOG_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -32,19 +33,17 @@ class ChaosRequest(BaseModel):
     count: int = 3
 
 
-# ── Audit log path ──────────────────────────────────────────────────────────
-
-_AUDIT_LOG_PATH = Path("data/audit_log.json")
+# ── Audit log reader ───────────────────────────────────────────────────────
 
 
 def _read_audit_log() -> list[dict[str, Any]]:
     """Read and return the audit log entries, or an empty list on failure."""
-    if not _AUDIT_LOG_PATH.exists():
+    if not AUDIT_LOG_PATH.exists():
         return []
     try:
-        return json.loads(_AUDIT_LOG_PATH.read_text(encoding="utf-8"))
+        return json.loads(AUDIT_LOG_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        logger.warning("Failed to read audit log at %s", _AUDIT_LOG_PATH, exc_info=True)
+        logger.warning("Failed to read audit log at %s", AUDIT_LOG_PATH, exc_info=True)
         return []
 
 
@@ -138,41 +137,130 @@ async def get_audit_log() -> list[dict[str, Any]]:
 
 @router.post("/chat", response_model=ChatResponse)
 async def war_room_chat(body: ChatRequest) -> ChatResponse:
-    """War room: send a message to the LLM with current cluster context.
+    """War room: send a message to the LLM with rich read-only cluster context.
 
-    Gathers a lightweight cluster state snapshot and uses it as context for
-    a conversational LLM call.
+    Gathers pods, events, deployments, node info, and recent incidents —
+    all via READ-ONLY kubectl operations. The LLM has zero write access.
     """
     from src.llm.client import llm_call
 
-    # Build cluster context
-    cluster_context = ""
-    try:
-        from src.utils.k8s_client import get_core_v1
+    sections: list[str] = []
 
-        core = get_core_v1()
-        pods = core.list_namespaced_pod(namespace=settings.NAMESPACE)
-        pod_summaries = []
-        for pod in pods.items:
-            phase = pod.status.phase
-            restarts = sum(
-                (cs.restart_count or 0)
-                for cs in (pod.status.container_statuses or [])
-            )
-            pod_summaries.append(f"  - {pod.metadata.name}: {phase} (restarts={restarts})")
-        cluster_context = "Current pods:\n" + "\n".join(pod_summaries)
+    try:
+        from src.mcp_server.kubectl_tools import (
+            get_pods, get_events, get_nodes, get_deployments, describe_pod,
+        )
+
+        # ── Pods with details ──────────────────────────────────────
+        pods = get_pods(namespace=settings.NAMESPACE)
+        if isinstance(pods, list):
+            pod_lines = []
+            for p in pods:
+                status = p.get("phase", "?")
+                restarts = p.get("restart_count", 0)
+                ready = p.get("ready", False)
+                reasons = []
+                for cs in p.get("container_statuses", []):
+                    if cs.get("reason"):
+                        reasons.append(cs["reason"])
+                reason_str = f" ({', '.join(reasons)})" if reasons else ""
+                pod_lines.append(
+                    f"  {p['name']}: {status}{reason_str} ready={ready} restarts={restarts}"
+                )
+            sections.append("Pods:\n" + "\n".join(pod_lines))
+
+            # Auto-describe unhealthy pods for richer context
+            for p in pods:
+                if p.get("phase") != "Running" or not p.get("ready", True):
+                    try:
+                        desc = describe_pod(name=p["name"], namespace=settings.NAMESPACE)
+                        if isinstance(desc, dict) and "error" not in desc:
+                            events_str = ""
+                            for ev in desc.get("events", [])[:5]:
+                                events_str += f"\n    {ev.get('reason','?')}: {ev.get('message','')}"
+                            conditions_str = ""
+                            for c in desc.get("conditions", [])[:5]:
+                                conditions_str += f"\n    {c.get('type','?')}={c.get('status','?')}: {c.get('message','')}"
+                            sections.append(
+                                f"Describe {p['name']}:"
+                                f"\n  Phase: {desc.get('phase')}"
+                                f"\n  Node: {desc.get('node_name', 'unscheduled')}"
+                                f"\n  Conditions:{conditions_str or ' none'}"
+                                f"\n  Events:{events_str or ' none'}"
+                            )
+                    except Exception:
+                        pass
+
+        # ── Recent events ──────────────────────────────────────────
+        events = get_events(namespace=settings.NAMESPACE, limit=10)
+        if isinstance(events, list) and events:
+            ev_lines = []
+            for e in events[:10]:
+                ev_lines.append(
+                    f"  [{e.get('type','?')}] {e.get('reason','?')}: "
+                    f"{e.get('name','?')} — {e.get('message','')[:120]}"
+                )
+            sections.append("Recent Events:\n" + "\n".join(ev_lines))
+
+        # ── Deployments ────────────────────────────────────────────
+        deployments = get_deployments(namespace=settings.NAMESPACE)
+        if isinstance(deployments, list) and deployments:
+            dep_lines = []
+            for d in deployments:
+                dep_lines.append(
+                    f"  {d.get('name','?')}: "
+                    f"{d.get('ready_replicas',0)}/{d.get('replicas',0)} ready, "
+                    f"updated={d.get('updated_replicas',0)}"
+                )
+            sections.append("Deployments:\n" + "\n".join(dep_lines))
+
+        # ── Nodes ──────────────────────────────────────────────────
+        nodes = get_nodes()
+        if isinstance(nodes, list) and nodes:
+            node_lines = []
+            for n in nodes:
+                conditions = {c.get("type"): c.get("status") for c in n.get("conditions", [])}
+                node_lines.append(
+                    f"  {n.get('name','?')}: Ready={conditions.get('Ready','?')} "
+                    f"cpu={n.get('capacity',{}).get('cpu','?')} "
+                    f"mem={n.get('capacity',{}).get('memory','?')}"
+                )
+            sections.append("Nodes:\n" + "\n".join(node_lines))
+
     except Exception:
-        cluster_context = "(Unable to fetch cluster state)"
-        logger.warning("war_room_chat: failed to fetch cluster state", exc_info=True)
+        sections.append("(Unable to fetch cluster state)")
+        logger.warning("war_room_chat: failed to gather context", exc_info=True)
+
+    # ── Recent incidents from audit log ────────────────────────
+    try:
+        recent = _read_audit_log()[-10:]
+        if recent:
+            inc_lines = []
+            for e in recent:
+                inc_lines.append(
+                    f"  [{e.get('stage','')}] {e.get('incident_id','')[:12]} "
+                    f"— {e.get('summary','')[:100]}"
+                )
+            sections.append("Recent Audit Log:\n" + "\n".join(inc_lines))
+    except Exception:
+        pass
+
+    cluster_context = "\n\n".join(sections) if sections else "(no data)"
 
     messages = [
         {
             "role": "system",
             "content": (
-                "You are K8sWhisperer, an AI Kubernetes SRE assistant. "
-                "Answer questions about the cluster using the provided context. "
-                "Be concise and actionable.\n\n"
-                f"Cluster state:\n{cluster_context}"
+                "You are K8sWhisperer, an AI Kubernetes SRE assistant in a War Room. "
+                "You have READ-ONLY access to the cluster. You can see pods, events, "
+                "deployments, nodes, and recent incidents below.\n\n"
+                "When the user asks to diagnose or fix something:\n"
+                "- Use the evidence below to explain what's wrong and why\n"
+                "- For fixes that need write access, explain what SHOULD be done and "
+                "suggest the user inject a chaos cleanup or use the pipeline\n"
+                "- Never pretend you executed a command — be honest about what you can see vs do\n"
+                "- Be concise and actionable\n\n"
+                f"=== CLUSTER STATE (live, read-only) ===\n{cluster_context}"
             ),
         },
         {"role": "user", "content": body.message},
@@ -298,6 +386,190 @@ async def get_incident_traces(incident_id: str):
     from src.tracing.tracer import get_traces_for_incident
 
     return get_traces_for_incident(incident_id)
+
+
+# ── Blockchain endpoints (with TTL cache) ──────────────────────────────────
+
+import time as _time
+
+_blockchain_cache: dict[str, Any] = {"status": None, "incidents": None}
+_blockchain_cache_ts: dict[str, float] = {"status": 0.0, "incidents": 0.0}
+_BLOCKCHAIN_CACHE_TTL = 30  # seconds
+
+
+@router.get("/blockchain/status")
+async def blockchain_status() -> dict[str, Any]:
+    """Return blockchain connection status with 30s TTL cache."""
+    now = _time.time()
+
+    # Return cached response if fresh
+    if _blockchain_cache["status"] and (now - _blockchain_cache_ts["status"]) < _BLOCKCHAIN_CACHE_TTL:
+        return _blockchain_cache["status"]
+
+    try:
+        from src.blockchain.stellar_client import get_incident_count
+
+        if not settings.ENABLE_BLOCKCHAIN:
+            result = {
+                "enabled": False,
+                "connection": "disabled",
+                "contract_id": None,
+                "network": None,
+                "incident_count": 0,
+            }
+            _blockchain_cache["status"] = result
+            _blockchain_cache_ts["status"] = now
+            return result
+
+        contract_id = settings.STELLAR_CONTRACT_ID
+        has_credentials = bool(settings.STELLAR_SECRET_KEY and contract_id)
+
+        if not has_credentials:
+            result = {
+                "enabled": True,
+                "connection": "not_configured",
+                "contract_id": None,
+                "network": "testnet",
+                "incident_count": 0,
+            }
+            _blockchain_cache["status"] = result
+            _blockchain_cache_ts["status"] = now
+            return result
+
+        incident_count = await get_incident_count()
+
+        result = {
+            "enabled": True,
+            "connection": "active",
+            "contract_id": contract_id,
+            "network": "testnet",
+            "incident_count": incident_count,
+        }
+        _blockchain_cache["status"] = result
+        _blockchain_cache_ts["status"] = now
+        return result
+    except Exception:
+        logger.exception("Failed to fetch blockchain status")
+        # Return stale cache if available
+        if _blockchain_cache["status"]:
+            return _blockchain_cache["status"]
+        return {
+            "enabled": settings.ENABLE_BLOCKCHAIN,
+            "connection": "error",
+            "contract_id": settings.STELLAR_CONTRACT_ID,
+            "network": "testnet",
+            "incident_count": 0,
+        }
+
+
+@router.get("/blockchain/incidents")
+async def list_blockchain_incidents() -> list[dict[str, Any]]:
+    """Return on-chain incident records with 30s TTL cache."""
+    now = _time.time()
+
+    # Return cached if fresh
+    if _blockchain_cache["incidents"] is not None and (now - _blockchain_cache_ts["incidents"]) < _BLOCKCHAIN_CACHE_TTL:
+        return _blockchain_cache["incidents"]
+
+    if not settings.ENABLE_BLOCKCHAIN:
+        return []
+
+    entries = _read_audit_log()
+    if not entries:
+        return []
+
+    # Collect unique incidents from the audit log
+    seen: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        iid = entry.get("incident_id", "unknown")
+        if iid == "unknown":
+            continue
+
+        details = entry.get("details", {})
+        anomaly = details.get("anomaly", {})
+        plan = details.get("plan", {})
+        decision = entry.get("decision", "")
+
+        if iid not in seen:
+            seen[iid] = {
+                "incident_id": iid,
+                "anomaly_type": anomaly.get("type", "unknown"),
+                "action": plan.get("action", "unknown"),
+                "timestamp": entry.get("timestamp"),
+                "confidence": float(anomaly.get("confidence") or plan.get("confidence") or 0),
+                "severity": anomaly.get("severity"),
+                "namespace": anomaly.get("namespace"),
+                "auto_executed": decision == "auto-executed",
+                "decision": decision or "unknown",
+                "explorer_url": (
+                    f"https://stellar.expert/explorer/testnet/contract/{settings.STELLAR_CONTRACT_ID}"
+                    if settings.STELLAR_CONTRACT_ID else None
+                ),
+            }
+        else:
+            # Update with latest data
+            if entry.get("timestamp"):
+                seen[iid]["timestamp"] = entry["timestamp"]
+            if decision:
+                seen[iid]["decision"] = decision
+                seen[iid]["auto_executed"] = decision == "auto-executed"
+
+    results = list(seen.values())
+    _blockchain_cache["incidents"] = results
+    _blockchain_cache_ts["incidents"] = now
+    return results
+
+
+@router.get("/blockchain/incidents/{incident_id}")
+async def get_blockchain_incident(incident_id: str) -> dict[str, Any]:
+    """Return a specific on-chain incident record along with audit log metadata."""
+    from src.blockchain.stellar_client import get_incident_from_chain
+
+    if not settings.ENABLE_BLOCKCHAIN:
+        return {"status": "disabled", "incident_id": incident_id}
+
+    # Gather audit log metadata for this incident
+    entries = _read_audit_log()
+    audit_meta: dict[str, Any] = {}
+    for entry in entries:
+        if entry.get("incident_id") == incident_id:
+            details = entry.get("details", {})
+            anomaly = details.get("anomaly", {})
+            plan = details.get("plan", {})
+            audit_meta = {
+                "anomaly_type": anomaly.get("type"),
+                "action": plan.get("action"),
+                "severity": anomaly.get("severity"),
+                "confidence": anomaly.get("confidence") or plan.get("confidence"),
+                "namespace": anomaly.get("namespace"),
+                "affected_resource": anomaly.get("affected_resource"),
+                "timestamp": entry.get("timestamp"),
+                "summary": entry.get("summary", ""),
+                "outcome": entry.get("outcome", ""),
+            }
+            # Keep iterating to get latest timestamp / summary
+    if not audit_meta:
+        audit_meta = {"note": "No audit log entries found for this incident"}
+
+    # Fetch the on-chain record
+    try:
+        chain_record = await get_incident_from_chain(incident_id)
+    except Exception:
+        logger.exception("Failed to fetch blockchain record for %s", incident_id)
+        chain_record = {"status": "error", "reason": "unexpected failure"}
+
+    explorer_url = None
+    if chain_record.get("transaction_hash"):
+        explorer_url = (
+            f"https://stellar.expert/explorer/testnet/tx/{chain_record['transaction_hash']}"
+        )
+
+    return {
+        "incident_id": incident_id,
+        "audit_log": audit_meta,
+        "blockchain": chain_record,
+        "explorer_url": explorer_url,
+    }
 
 
 @router.websocket("/ws")
