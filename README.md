@@ -119,10 +119,30 @@ K8sWhisperer uses a **least-privilege ServiceAccount** -- no cluster-admin:
 - Nodes: get, list, watch (cluster-scoped, read-only)
 - No namespace deletion, no secret access
 
+## Project Vision
+
+Reduce Kubernetes incident response from 40+ minutes of manual log-grepping to under 90 seconds of autonomous detection, diagnosis, and remediation — with safety gates ensuring the agent never destroys what it's trying to protect.
+
 ## Deployed Smart Contract
 
-- **Network**: Stellar Testnet
-- **Contract ID**: (deployed during hackathon)
+- **Network**: Stellar Testnet (Soroban)
+- **Contract ID**: `CBRRAMDMSR2ZJ5F5MNTOXEOQUYJLMTTODEGHOVQZYRJV5VV7LS4JC5OX`
+- **Explorer**: [View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/CBRRAMDMSR2ZJ5F5MNTOXEOQUYJLMTTODEGHOVQZYRJV5VV7LS4JC5OX)
+- **Functions**: `store_incident()`, `get_incident()`, `get_count()`, `list_incident_ids()`
+- **Integration**: Every resolved incident is automatically recorded on-chain from the explain node. Frontend reads live on-chain data via `/api/blockchain/status` and `/api/blockchain/incidents`.
+
+## UI Screenshots
+
+> Screenshots available in `docs/` and in the demo video.
+
+## Future Scope
+
+- **Multi-cluster support** — Monitor multiple K8s clusters from a single agent
+- **Custom anomaly types** — User-defined detection rules beyond the 8 built-in types
+- **PagerDuty/OpsGenie integration** — Route HITL approvals to existing on-call tools
+- **Permanent fix PRs** — Auto-generate GitHub PRs to update deployment manifests (prototype implemented)
+- **Cost optimization** — Detect over-provisioned resources and recommend right-sizing
+- **Incident correlation** — Group related anomalies (e.g., OOMKill + Evicted on same node = node pressure)
 
 ## Team
 
